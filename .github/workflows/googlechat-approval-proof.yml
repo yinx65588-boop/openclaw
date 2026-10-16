@@ -1,0 +1,87 @@
+name: Google Chat final fixture and types proof
+on:
+  push:
+    branches: [proof/googlechat-final-98518]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+  PROOF_BASE: ec90dc1ef23dd9c9dd731479b4431d9b082b78d5
+jobs:
+  final:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: a0e989b97d6e1d58a3748b127e292e924fdaef05
+          persist-credentials: false
+          fetch-depth: 3
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: read-write
+      - name: Fixed fixture baseline failure and repaired native delivery
+        shell: bash
+        run: |
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/source-sha.txt
+          git restore --source="$PROOF_BASE" --worktree -- extensions/googlechat/src/approval-card-actions.ts
+          set +e
+          pnpm test extensions/googlechat/src/approval-handler.runtime.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline-runtime.json > .proof/baseline-runtime.log 2>&1
+          echo "$?" > .proof/baseline-runtime.status
+          git restore --source=HEAD --worktree -- extensions/googlechat/src/approval-card-actions.ts
+          set -e
+          node --input-type=module <<'JS' | tee .proof/baseline-summary.log
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const report=JSON.parse(fs.readFileSync('.proof/baseline-runtime.json','utf8'));
+          assert.equal(report.numFailedTests,1);
+          assert.equal(report.numPassedTests,6);
+          const failed=report.testResults.flatMap(s=>s.assertionResults??[]).filter(a=>a.status==='failed');
+          assert.equal(failed.length,1);
+          assert.ok(failed[0].fullName.includes('suppresses manual approval follow-ups during and after native card delivery (1)'));
+          console.log('Baseline: one intended plugin duplicate-prompt failure; six controls pass.');
+          JS
+          pnpm test extensions/googlechat/src/approval-handler.runtime.test.ts --maxWorkers=1 > .proof/repaired-runtime.log 2>&1
+          cat .proof/repaired-runtime.log
+      - name: Exact changed extension test types
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          fs.writeFileSync('.proof/tsconfig.googlechat-tests.json',JSON.stringify({
+            extends:'../test/tsconfig/tsconfig.extensions.test.json',
+            compilerOptions:{tsBuildInfoFile:'../.artifacts/tsgo-cache/googlechat-tests.tsbuildinfo'},
+            include:['../test/types/vitest-codex-attempt-runtime.d.ts','../src/**/*.d.ts','../ui/**/*.d.ts','../extensions/**/*.d.ts','../packages/**/*.d.ts','../extensions/googlechat/src/approval-card-actions.test.ts','../extensions/googlechat/src/approval-handler.runtime.test.ts']
+          }));
+          JS
+          node scripts/run-tsgo.mjs -p .proof/tsconfig.googlechat-tests.json --incremental > .proof/types-extension-tests.log 2>&1
+      - name: Upload immediate type diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: googlechat-final-type-proof
+          path: .proof/
+          include-hidden-files: true
+      - name: Changed fixture lint and all changed source formatting
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/run-oxlint.mjs --tsconfig extensions/tsconfig.json --threads=1 extensions/googlechat/src/approval-handler.runtime.test.ts > .proof/fixture-lint.log 2>&1
+          git diff --name-only "$PROOF_BASE" HEAD -- src extensions | xargs pnpm exec oxfmt --check > .proof/format.log 2>&1
+          git diff --check "$PROOF_BASE" HEAD
+      - name: Line cap growth
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/tsx.mjs scripts/check-line-cap-ratchet.mts --base "$PROOF_BASE" > .proof/line-cap.log 2>&1
+      - name: Upload final evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: googlechat-final-proof
+          path: .proof/
+          include-hidden-files: true
