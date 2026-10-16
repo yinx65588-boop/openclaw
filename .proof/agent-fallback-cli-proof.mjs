@@ -24,9 +24,9 @@ const server = http.createServer(async (req, res) => {
     const event = {
       id: `chatcmpl_fixture_${requests.length}`, object: 'chat.completion.chunk',
       created: 1, model: payload.model,
-      // A tool-use finish without a structured call is explicitly fallback-eligible.
-      // Ordinary empty "stop" completions intentionally do not switch models.
-      choices: [{ index: 0, delta: { role: 'assistant', content: primary ? '' : 'Recovered after fallback.' }, finish_reason: primary ? 'tool_calls' : 'stop' }],
+      // A required answer ending at the output limit with only the silence marker
+      // is an incomplete, replay-safe candidate. Empty tool_calls normalize to stop.
+      choices: [{ index: 0, delta: { role: 'assistant', content: primary ? 'NO_REPLY' : 'Recovered after fallback.' }, finish_reason: primary ? 'length' : 'stop' }],
       usage: { prompt_tokens: primary ? 100 : 200, completion_tokens: primary ? 10 : 20, total_tokens: primary ? 110 : 220 },
     };
     res.writeHead(200, { 'content-type': 'text/event-stream' });

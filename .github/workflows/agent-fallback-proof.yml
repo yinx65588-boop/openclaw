@@ -36,7 +36,7 @@ jobs:
           git rev-parse HEAD > .proof/source.log
       - name: Build same reviewed source for public CLI execution
         run: pnpm build > .proof/build.log 2>&1
-      - name: Fallback-eligible malformed tool completion and persisted accounting
+      - name: Output-limit incomplete candidate fallback and persisted accounting
         run: node "$RUNNER_TEMP/agent-fallback-cli-proof.mjs"
       - name: Upload CLI evidence
         if: always()
