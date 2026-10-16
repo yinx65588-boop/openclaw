@@ -243,6 +243,7 @@ async function runEmbeddedAgentForSession(
       params = { ...params, onAgentEvent };
       const refresh = createEmbeddedAgentPluginRuntimeRefresh(params);
       const usage = createUsageAccumulator();
+      const diagnosticUsage = createUsageAccumulator();
       let refreshed = false;
       let generationCleanup = Promise.resolve();
       let terminal: ReturnType<typeof createAgentLifecycleTerminalBackstop> | undefined;
@@ -648,6 +649,10 @@ async function runEmbeddedAgentForSession(
             const continuation = refresh.takeContinuation();
             if (refreshed || continuation) {
               mergeUsageIntoAccumulator(usage, result.meta.agentMeta?.usage);
+              mergeUsageIntoAccumulator(
+                diagnosticUsage,
+                result.meta.agentMeta?.diagnosticUsage ?? result.meta.agentMeta?.usage,
+              );
               mergeAttemptRunStatsIntoAccumulator(usage, result.meta.agentMeta ?? {});
             }
             if (!continuation) {
@@ -660,6 +665,7 @@ async function runEmbeddedAgentForSession(
                     agentMeta: {
                       ...result.meta.agentMeta,
                       usage: toNormalizedUsage(usage),
+                      diagnosticUsage: toNormalizedUsage(diagnosticUsage),
                       costUsd:
                         usage.cost && usage.cost !== "unavailable" ? usage.cost.total : undefined,
                       assistantTurns: usage.assistantTurns,

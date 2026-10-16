@@ -7,6 +7,7 @@ import {
 } from "../../infra/agent-events.js";
 import { getAgentRunContext } from "../../infra/agent-run-registry.js";
 import { requireActivePluginRegistry } from "../../plugins/runtime.js";
+import { estimateAggregateUsageCost } from "../../utils/usage-format.js";
 import { mergeAcceptedSessionSpawnsForRun } from "../accepted-session-spawn.js";
 import { readPreparedRunOperatorAuthority } from "../admitted-run-context.js";
 import { createAssistantErrorTranscript } from "../assistant-error-transcript.js";
@@ -58,7 +59,13 @@ import type {
   EmbeddedAgentRunEntryParams,
   EmbeddedAgentRunEntryResult,
 } from "./run-entry.types.js";
-import type { EmbeddedAgentRunResult } from "./types.js";
+import type { EmbeddedAgentMeta, EmbeddedAgentRunResult } from "./types.js";
+import {
+  createUsageAccumulator,
+  mergeAttemptRunStatsIntoAccumulator,
+  mergeUsageIntoAccumulator,
+  toNormalizedUsage,
+} from "./usage-accumulator.js";
 
 export type { EmbeddedAgentRunEntryTerminal } from "./run-entry-terminal.js";
 export type { RunEntryCandidateOptions } from "./run-entry.types.js";
@@ -187,6 +194,7 @@ async function runEmbeddedAgentEntryInternal<T extends EmbeddedAgentRunResult>(
   const assistantErrorTranscript = createAssistantErrorTranscript();
   let failed = true;
   let candidateIndex = 0;
+  const completedCandidates: Array<EmbeddedAgentMeta | undefined> = [];
   const committedSideEffect =
     params.behavior.kind === "command-rpc" ? params.behavior.hasCommittedSideEffect : undefined;
   const readChannelDeliveryEvidence =
@@ -416,6 +424,9 @@ async function runEmbeddedAgentEntryInternal<T extends EmbeddedAgentRunResult>(
                 contextEngineTurnCandidate = facts;
               },
             });
+            // Classification may run repeatedly and the selected result can be replaced.
+            // Account physical work once, only after a candidate returns its usage.
+            completedCandidates.push(result.meta.agentMeta);
             return {
               result,
               classification: classifyResult(result),
@@ -547,7 +558,7 @@ async function runEmbeddedAgentEntryInternal<T extends EmbeddedAgentRunResult>(
       params.behavior.kind === "command-rpc"
         ? resolveAgentRunAbortLifecycleFields(params.abortSignal)
         : {};
-    const candidateResult =
+    let candidateResult =
       abortFields.aborted === true
         ? ({
             ...fallbackResult.result.result,
@@ -557,6 +568,44 @@ async function runEmbeddedAgentEntryInternal<T extends EmbeddedAgentRunResult>(
             },
           } as T)
         : fallbackResult.result.result;
+    if (completedCandidates.length > 1 && candidateResult.meta.agentMeta) {
+      const usage = createUsageAccumulator();
+      const diagnosticUsage = createUsageAccumulator();
+      for (const candidate of completedCandidates) {
+        for (const [accumulator, observed] of [
+          [usage, candidate?.usage],
+          [diagnosticUsage, candidate?.diagnosticUsage ?? candidate?.usage],
+        ] as const) {
+          const costUsd = estimateAggregateUsageCost({
+            usage: observed,
+            provider: candidate?.provider,
+            model: candidate?.model,
+            config: params.selection.cfg,
+            agentDir: params.selection.agentDir,
+          });
+          mergeUsageIntoAccumulator(accumulator, {
+            ...observed,
+            cost: costUsd === undefined ? undefined : { ...observed?.cost, total: costUsd },
+            costStatus: costUsd === undefined ? "unavailable" : "complete",
+          });
+        }
+        mergeAttemptRunStatsIntoAccumulator(usage, candidate ?? {});
+      }
+      candidateResult = {
+        ...candidateResult,
+        meta: {
+          ...candidateResult.meta,
+          agentMeta: {
+            ...candidateResult.meta.agentMeta,
+            usage: toNormalizedUsage(usage),
+            diagnosticUsage: toNormalizedUsage(diagnosticUsage),
+            costUsd: usage.cost && usage.cost !== "unavailable" ? usage.cost.total : undefined,
+            assistantTurns: usage.assistantTurns,
+            ...(usage.bridgeCalls ? { bridgeCalls: usage.bridgeCalls } : {}),
+          },
+        },
+      };
+    }
     const outcome = fallbackResult.outcome;
     // A completed fallback search can still return a failed or interrupted run.
     const terminalOutcome = resolveRunEntryTerminalOutcome({
