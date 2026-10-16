@@ -27,6 +27,7 @@ jobs:
       - name: Prepare changed source inventory
         run: |
           mkdir -p .proof
+          git fetch --depth=1 origin "$PROOF_BASE"
           git diff --name-only "$PROOF_BASE" HEAD -- src extensions > .proof/changed-paths.txt
           git update-ref refs/remotes/origin/main "$PROOF_BASE"
           pnpm docs:list > .proof/docs-index.log
