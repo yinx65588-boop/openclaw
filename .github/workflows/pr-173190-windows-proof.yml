@@ -1,0 +1,27 @@
+name: PR 173190 Windows shipped Gateway proof
+on:
+  push:
+    branches: [proof/windows-env-173190]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-shipped-session:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout proof harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install supported Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+      - name: Install published OpenClaw 2026.10.3 in isolated prefix
+        shell: pwsh
+        run: npm install --prefix .proof/runtime --omit=dev --no-audit --no-fund openclaw@2026.10.3
+      - name: Run shipped CLI and Gateway on Windows
+        shell: pwsh
+        run: node .proof/windows-session-proof.mjs
