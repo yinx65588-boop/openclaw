@@ -14,19 +14,32 @@ const requests = [];
 const server = http.createServer(async (req, res) => {
   try {
     assert.equal(req.method, 'POST');
-    assert.equal(req.url, '/v1/chat/completions');
     let body = '';
     for await (const chunk of req) body += chunk;
     const payload = JSON.parse(body);
     assert(['model-a', 'model-b'].includes(payload.model));
     const primary = payload.model === 'model-a';
+    assert.equal(new URL(req.url, 'http://fixture.invalid').pathname, primary ? '/v1/messages' : '/v1/chat/completions');
     requests.push({ model: payload.model, input: primary ? 100 : 200, output: primary ? 10 : 20 });
+    if (primary) {
+      // Anthropic retains a tool_use stop without structured calls. The embedded
+      // recovery owner retries once, then returns a completed fallback-safe result.
+      const events = [
+        { type: 'message_start', message: { id: `msg_fixture_${requests.length}`, type: 'message', role: 'assistant', model: payload.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 100, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'NO_REPLY' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null }, usage: { output_tokens: 10 } },
+        { type: 'message_stop' },
+      ];
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''));
+      return;
+    }
     const event = {
       id: `chatcmpl_fixture_${requests.length}`, object: 'chat.completion.chunk',
       created: 1, model: payload.model,
-      // A required answer ending at the output limit with only the silence marker
-      // is an incomplete, replay-safe candidate. Empty tool_calls normalize to stop.
-      choices: [{ index: 0, delta: { role: 'assistant', content: primary ? 'NO_REPLY' : 'Recovered after fallback.' }, finish_reason: primary ? 'length' : 'stop' }],
+      choices: [{ index: 0, delta: { role: 'assistant', content: 'Recovered after fallback.' }, finish_reason: 'stop' }],
       usage: { prompt_tokens: primary ? 100 : 200, completion_tokens: primary ? 10 : 20, total_tokens: primary ? 110 : 220 },
     };
     res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -40,7 +53,7 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
   const provider = (id, input, output) => ({
-    api: 'openai-completions', apiKey: 'synthetic-unused-fixture-key', baseUrl,
+    api: id === 'model-a' ? 'anthropic-messages' : 'openai-completions', apiKey: 'synthetic-unused-fixture-key', baseUrl: id === 'model-a' ? baseUrl.replace(/\/v1$/, '') : baseUrl,
     request: { allowPrivateNetwork: true },
     models: [{ id, name: id, reasoning: false, input: ['text'], contextWindow: 32000, maxTokens: 1024,
       cost: { input, output, cacheRead: 0, cacheWrite: 0 } }],
@@ -89,6 +102,7 @@ try {
   assert.equal(session.inputTokens, input);
   assert.equal(session.outputTokens, output);
   assert.equal(session.totalTokens, 200, 'live context belongs to the winner');
+  assert.equal(session.totalTokensFresh, true);
   await fs.writeFile('.proof/cli-result.json', JSON.stringify({ requests, input, output, expectedCostUsd: cost, result, session }, null, 2));
   console.log(JSON.stringify({ proof: 'public configured fallback via pnpm openclaw agent --local and sessions --json with local HTTP fixtures', requests, input, output, costUsd: meta.costUsd, winner: meta.provider + '/' + meta.model, contextTokens: session.totalTokens }));
 } finally {

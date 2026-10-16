@@ -34,9 +34,9 @@ jobs:
           mkdir -p .proof
           curl --fail --silent --show-error "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/.proof/agent-fallback-cli-proof.mjs" -o "$RUNNER_TEMP/agent-fallback-cli-proof.mjs"
           git rev-parse HEAD > .proof/source.log
-      - name: Build same reviewed source for public CLI execution
-        run: pnpm build > .proof/build.log 2>&1
-      - name: Output-limit incomplete candidate fallback and persisted accounting
+      - name: Prepare CLI through its supported runtime build owner
+        run: pnpm --silent openclaw --version > .proof/runtime-bootstrap.log 2>&1
+      - name: Native malformed-tool completion fallback and persisted accounting
         run: node "$RUNNER_TEMP/agent-fallback-cli-proof.mjs"
       - name: Upload CLI evidence
         if: always()
