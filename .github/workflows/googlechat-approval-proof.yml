@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: a0e989b97d6e1d58a3748b127e292e924fdaef05
+          ref: 288d47076f373f9b27d2813ad81642fddc6cc757
           persist-credentials: false
           fetch-depth: 3
       - uses: ./.github/actions/setup-node-env
@@ -29,6 +29,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p .proof
+          git fetch --depth=1 origin "$PROOF_BASE"
           git rev-parse HEAD > .proof/source-sha.txt
           git restore --source="$PROOF_BASE" --worktree -- extensions/googlechat/src/approval-card-actions.ts
           set +e
