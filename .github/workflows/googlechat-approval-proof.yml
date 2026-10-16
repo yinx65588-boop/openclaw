@@ -1,0 +1,146 @@
+name: Google Chat plugin approval regression proof
+on:
+  push:
+    branches: [proof/googlechat-98518]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+  PROOF_BASE: ec90dc1ef23dd9c9dd731479b4431d9b082b78d5
+jobs:
+  regressions:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: read-write
+      - name: Reproduce on baseline with identical tests
+        shell: bash
+        run: |
+          mkdir -p .proof
+          printf '%s\n' "$GITHUB_SHA" > .proof/source-sha.txt
+          git restore --source="$PROOF_BASE" --worktree -- src/channels/plugins/exec-approval-local.ts src/plugin-sdk/approval-native-helpers.ts extensions/googlechat/src/approval-card-actions.ts
+          set +e
+          pnpm test src/plugin-sdk/approval-native-helpers.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline-sdk.json > .proof/baseline-sdk.log 2>&1
+          echo "$?" > .proof/baseline-sdk.status
+          pnpm test extensions/googlechat/src/approval-card-actions.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline-actions.json > .proof/baseline-actions.log 2>&1
+          echo "$?" > .proof/baseline-actions.status
+          pnpm test extensions/googlechat/src/approval-handler.runtime.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline-runtime.json > .proof/baseline-runtime.log 2>&1
+          echo "$?" > .proof/baseline-runtime.status
+          pnpm test src/auto-reply/reply/dispatch-from-config.lifecycle.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline-dispatch.json > .proof/baseline-dispatch.log 2>&1
+          echo "$?" > .proof/baseline-dispatch.status
+          git restore --source=HEAD --worktree -- src/channels/plugins/exec-approval-local.ts src/plugin-sdk/approval-native-helpers.ts extensions/googlechat/src/approval-card-actions.ts
+          set -e
+          node --input-type=module <<'JS' | tee .proof/baseline-summary.log
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const expected = {
+            sdk: 'uses the plugin forwarding config',
+            actions: 'suppresses plugin approval follow-ups only',
+            runtime: 'suppresses manual approval follow-ups during and after native card delivery (1)',
+            dispatch: 'suppresses with an active plugin route for Google Chat plugin approval prompts',
+          };
+          for (const [name, expectedName] of Object.entries(expected)) {
+            const report = JSON.parse(fs.readFileSync(`.proof/baseline-${name}.json`, 'utf8'));
+            const failed = report.testResults.flatMap(s => s.assertionResults ?? []).filter(a => a.status === 'failed');
+            console.log(`${name}: ${report.numFailedTests} failed, ${report.numPassedTests} passed`);
+            console.log(failed.map(a => a.fullName).join('\n'));
+            assert.equal(fs.readFileSync(`.proof/baseline-${name}.status`, 'utf8').trim(), '1');
+            assert.equal(report.numFailedTests, 1);
+            assert.equal(report.numRuntimeErrorTestSuites ?? 0, 0);
+            assert.equal(failed.length, 1);
+            assert.ok(failed[0].fullName.includes(expectedName));
+          }
+          JS
+      - name: Repaired SDK and real dispatch regressions
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm test src/plugin-sdk/approval-native-helpers.test.ts src/auto-reply/reply/dispatch-from-config.lifecycle.test.ts --maxWorkers=1 > .proof/repaired-core.log 2>&1
+          cat .proof/repaired-core.log
+      - name: Google Chat plugin lane
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm test:extension googlechat --maxWorkers=1 > .proof/repaired-googlechat.log 2>&1
+          cat .proof/repaired-googlechat.log
+      - name: Shared helper channel consumers
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm test extensions/signal/src/approval-native.test.ts extensions/imessage/src/approval-native.test.ts extensions/msteams/src/approval-native.test.ts --maxWorkers=1 > .proof/consumers.log 2>&1
+          cat .proof/consumers.log
+      - name: Upload regression evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: googlechat-regression-proof
+          path: .proof/
+          include-hidden-files: true
+  static:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: read-write
+      - name: Prepare changed source inventory
+        run: |
+          mkdir -p .proof
+          git diff --name-only "$PROOF_BASE" HEAD -- src extensions > .proof/changed-paths.txt
+          git update-ref refs/remotes/origin/main "$PROOF_BASE"
+          pnpm docs:list > .proof/docs-index.log
+      - name: Production types
+        if: ${{ !cancelled() }}
+        run: pnpm tsgo:core > .proof/types-core.log 2>&1
+      - name: Changed test owner types
+        if: ${{ !cancelled() }}
+        run: node scripts/run-tsgo-core-test-shards.mjs --changed-paths-json "$(node -e 'console.log(JSON.stringify(require("fs").readFileSync(".proof/changed-paths.txt","utf8").trim().split("\n")))')" > .proof/types-test.log 2>&1
+      - name: Extension types
+        if: ${{ !cancelled() }}
+        run: pnpm tsgo:extensions > .proof/types-extensions.log 2>&1
+      - name: Extension test types
+        if: ${{ !cancelled() }}
+        run: pnpm tsgo:extensions:test > .proof/types-extension-tests.log 2>&1
+      - name: Changed file owner lint and formatting
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          node --import ./scripts/tsx.mjs --input-type=module <<'JS' > .proof/lint.log 2>&1
+          import fs from 'node:fs';
+          import {detectChangedLanes} from './scripts/changed-lanes.mts';
+          import {runChangedCheck} from './scripts/check-changed.mts';
+          const paths = fs.readFileSync('.proof/changed-paths.txt','utf8').trim().split('\n');
+          process.exitCode = await runChangedCheck(detectChangedLanes(paths), {lintOnly:true,base:process.env.PROOF_BASE});
+          JS
+          cat .proof/lint.log
+      - name: Formatting correction artifact
+        if: ${{ !cancelled() }}
+        run: |
+          xargs pnpm exec oxfmt --write --threads=1 < .proof/changed-paths.txt > .proof/format.log 2>&1
+          git diff --binary > .proof/format.patch
+          git diff --exit-code
+      - name: Shared channel contracts
+        if: ${{ !cancelled() }}
+        run: pnpm test:contracts:channels > .proof/contracts.log 2>&1
+      - name: Upload static evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: googlechat-static-proof
+          path: .proof/
+          include-hidden-files: true
