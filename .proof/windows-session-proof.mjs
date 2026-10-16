@@ -70,7 +70,8 @@ try {
   await mkdir(workspace, { recursive: true });
   await writeFile(configPath, JSON.stringify({
     gateway: { mode: "local", bind: "loopback", port, auth: { mode: "token", token }, controlUi: { enabled: false } },
-    agents: { defaults: { workspace, memorySearch: { enabled: false } } },
+    agents: { defaults: { workspace } },
+    memory: { search: { enabled: false } },
     cron: { enabled: false },
     discovery: { mdns: { mode: "off" } },
     browser: { enabled: false },
