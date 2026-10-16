@@ -7,7 +7,6 @@ import {
 } from "../../infra/agent-events.js";
 import { getAgentRunContext } from "../../infra/agent-run-registry.js";
 import { requireActivePluginRegistry } from "../../plugins/runtime.js";
-import { estimateAggregateUsageCost } from "../../utils/usage-format.js";
 import { mergeAcceptedSessionSpawnsForRun } from "../accepted-session-spawn.js";
 import { readPreparedRunOperatorAuthority } from "../admitted-run-context.js";
 import { createAssistantErrorTranscript } from "../assistant-error-transcript.js";
@@ -33,6 +32,7 @@ import {
   sessionPlacementUsesWorkerInference,
   withRequiredSessionPlacement,
 } from "../session-placement-admission.js";
+import { mergeCompletedAgentUsage } from "./completed-usage.js";
 import {
   didEmbeddedCyberFailoverTargetCommitWork,
   EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE,
@@ -60,12 +60,7 @@ import type {
   EmbeddedAgentRunEntryResult,
 } from "./run-entry.types.js";
 import type { EmbeddedAgentMeta, EmbeddedAgentRunResult } from "./types.js";
-import {
-  createUsageAccumulator,
-  mergeAttemptRunStatsIntoAccumulator,
-  mergeUsageIntoAccumulator,
-  toNormalizedUsage,
-} from "./usage-accumulator.js";
+import { createUsageAccumulator, toNormalizedUsage } from "./usage-accumulator.js";
 
 export type { EmbeddedAgentRunEntryTerminal } from "./run-entry-terminal.js";
 export type { RunEntryCandidateOptions } from "./run-entry.types.js";
@@ -572,32 +567,24 @@ async function runEmbeddedAgentEntryInternal<T extends EmbeddedAgentRunResult>(
       const usage = createUsageAccumulator();
       const diagnosticUsage = createUsageAccumulator();
       for (const candidate of completedCandidates) {
-        for (const [accumulator, observed] of [
-          [usage, candidate?.usage],
-          [diagnosticUsage, candidate?.diagnosticUsage ?? candidate?.usage],
-        ] as const) {
-          const costUsd = estimateAggregateUsageCost({
-            usage: observed,
-            provider: candidate?.provider,
-            model: candidate?.model,
-            config: params.selection.cfg,
-            agentDir: params.selection.agentDir,
-          });
-          mergeUsageIntoAccumulator(accumulator, {
-            ...observed,
-            cost: costUsd === undefined ? undefined : { ...observed?.cost, total: costUsd },
-            costStatus: costUsd === undefined ? "unavailable" : "complete",
-          });
-        }
-        mergeAttemptRunStatsIntoAccumulator(usage, candidate ?? {});
+        mergeCompletedAgentUsage({
+          usage,
+          diagnosticUsage,
+          agentMeta: candidate,
+          config: params.selection.cfg,
+          agentDir: params.selection.agentDir,
+        });
       }
+      const aggregatedUsage = toNormalizedUsage(usage);
       candidateResult = {
         ...candidateResult,
         meta: {
           ...candidateResult.meta,
           agentMeta: {
             ...candidateResult.meta.agentMeta,
-            usage: toNormalizedUsage(usage),
+            usage: aggregatedUsage
+              ? { ...aggregatedUsage, contextUsage: { state: "unavailable" } }
+              : undefined,
             diagnosticUsage: toNormalizedUsage(diagnosticUsage),
             costUsd: usage.cost && usage.cost !== "unavailable" ? usage.cost.total : undefined,
             assistantTurns: usage.assistantTurns,

@@ -102,7 +102,11 @@ describe("runEmbeddedAgentEntry cyber failover against the real fallback runner"
           model: "gpt-5.6",
           fallbacksOverride: ["openai/gpt-5.6-mini"],
         },
-        identity: { runId: "run-real-fallback-accounting", sessionId: "session-1" },
+        identity: {
+          runId: "run-real-fallback-accounting",
+          agentId: "main",
+          sessionId: "session-1",
+        },
         harness: createDirectHarness(),
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
         sessionOverride: { kind: "preserve" },
@@ -112,6 +116,13 @@ describe("runEmbeddedAgentEntry cyber failover against the real fallback runner"
           if (primary || exhausted) {
             candidate.payloads = [];
             candidate.meta.agentHarnessResultClassification = "empty";
+          }
+          if (exhausted) {
+            candidate.meta.error = {
+              kind: "incomplete_turn",
+              message: "Completed candidate needs recovery",
+              fallbackSafe: true,
+            };
           }
           candidate.meta.agentMeta = {
             sessionId: "session-1",

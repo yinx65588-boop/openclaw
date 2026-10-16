@@ -17,11 +17,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 5
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24.21.0'
       - name: Install locked dependencies on remote runner
+        id: deps
         uses: ./.github/actions/setup-node-env
         with:
           node-version: '24.21.0'
@@ -42,37 +43,52 @@ jobs:
           import fs from 'node:fs';
           import assert from 'node:assert/strict';
           const report = JSON.parse(fs.readFileSync('.proof/baseline.json', 'utf8'));
-          assert.equal(report.numFailedTests, 6);
+          assert.equal(report.numFailedTests, 8);
           assert.equal(report.numPassedTests, 1);
           const failures = report.testResults.flatMap(r => r.assertionResults).filter(r => r.status === 'failed');
           assert(failures.some(r => r.fullName.includes('recorded costs') && r.failureMessages.some(m => m.includes('300') && m.includes('200'))));
-          console.log('Baseline reproduced: 6 accounting assertions fail; thrown-before-result control passes.');
+          console.log('Baseline reproduced: 8 accounting/context assertions fail; thrown-before-result control passes.');
           JS
           git restore --source=HEAD -- src/agents/embedded-agent-runner/run-entry.ts src/agents/embedded-agent-runner/run-orchestrator.ts src/agents/embedded-agent-runner/usage-accumulator.ts src/agents/usage.ts src/utils/usage-format.ts
+      - name: Restore repaired production source
+        id: restore
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: git restore --source=HEAD -- src/agents/embedded-agent-runner/run-entry.ts src/agents/embedded-agent-runner/run-orchestrator.ts src/agents/embedded-agent-runner/usage-accumulator.ts src/agents/usage.ts src/utils/usage-format.ts
       - name: Focused repaired producer, real fallback runner and accounting consumers
+        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
         shell: bash
         run: |
           /usr/bin/time -v pnpm test src/agents/embedded-agent-runner/run-entry src/agents/embedded-agent-runner/usage-accumulator.test.ts src/utils/usage-format.cost.test.ts src/auto-reply/reply/reply-usage-state.test.ts src/auto-reply/reply/session-usage.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/repaired.json > .proof/repaired.log 2>&1
           cat .proof/repaired.log
       - name: Refresh continuation integration
+        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
         shell: bash
         run: |
           /usr/bin/time -v pnpm test src/agents/embedded-agent-runner/run.plugin-runtime-refresh.integration.test.ts --maxWorkers=1 > .proof/refresh.log 2>&1
           cat .proof/refresh.log
       - name: Changed-file checks and documentation index
+        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
         shell: bash
         run: |
-          paths=(docs/concepts/model-failover.md src/agents/usage.ts src/utils/usage-format.ts src/utils/usage-format.cost.test.ts src/agents/embedded-agent-runner/run-entry.ts src/agents/embedded-agent-runner/run-entry.accounting.test.ts src/agents/embedded-agent-runner/run-entry.cyber-failover.runner.test.ts src/agents/embedded-agent-runner/run-orchestrator.ts src/agents/embedded-agent-runner/run.plugin-runtime-refresh.integration.test.ts src/agents/embedded-agent-runner/usage-accumulator.ts)
+          paths=(docs/concepts/model-failover.md src/agents/usage.ts src/utils/usage-format.ts src/utils/usage-format.cost.test.ts src/agents/embedded-agent-runner/run-entry.ts src/agents/embedded-agent-runner/run-entry.accounting.test.ts src/agents/embedded-agent-runner/run-entry.cyber-failover.runner.test.ts src/agents/embedded-agent-runner/run-orchestrator.ts src/agents/embedded-agent-runner/run.plugin-runtime-refresh.integration.test.ts src/agents/embedded-agent-runner/usage-accumulator.ts src/agents/embedded-agent-runner/types.ts src/agents/embedded-agent-runner/completed-usage.ts)
           node scripts/check-changed.mjs --dry-run -- "${paths[@]}"
           node scripts/check-changed.mjs -- "${paths[@]}" > .proof/checks.log 2>&1
           cat .proof/checks.log
           pnpm docs:list > .proof/docs-index.log
       - name: Build production artifacts
+        id: build
+        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
         run: pnpm build > .proof/build.log 2>&1
+      - name: Public CLI fallback against local HTTP fixtures
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node .proof/agent-fallback-cli-proof.mjs
       - name: Upload full proof logs and reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: agent-fallback-accounting-proof
-          path: .proof/
+          path: |
+            .proof/*.log
+            .proof/*.json
+            .proof/repaired.json.reports-*/
           include-hidden-files: true

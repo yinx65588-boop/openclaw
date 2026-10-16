@@ -58,6 +58,7 @@ async function runAccountedEntry(
   fallback: NormalizedUsage,
   config = cfg,
   diagnostics?: [NormalizedUsage, NormalizedUsage],
+  lastCallUsage: NormalizedUsage | null = { input: 20, output: 2 },
 ) {
   return runEmbeddedAgentEntry({
     selection: { cfg: config, provider: "primary-provider", model: "primary-model" },
@@ -78,7 +79,9 @@ async function runAccountedEntry(
             model,
             usage,
             diagnosticUsage: diagnostics?.[options.isFallbackRetry ? 1 : 0],
-            lastCallUsage: { input: options.isFallbackRetry ? 20 : 90, output: 2 },
+            lastCallUsage: options.isFallbackRetry
+              ? (lastCallUsage ?? undefined)
+              : { input: 90, output: 2 },
             assistantTurns: options.isFallbackRetry ? 2 : 1,
             bridgeCalls: { search: 1, describe: 0, call: options.isFallbackRetry ? 3 : 1 },
           },
@@ -93,6 +96,30 @@ async function runAccountedEntry(
 }
 
 describe("fallback candidate accounting", () => {
+  it.each([null, { input: 0, output: 0, usageReport: { state: "available" as const } }])(
+    "does not treat discarded usage as the winner's context (%j)",
+    async (lastCallUsage) => {
+      const { result } = await runAccountedEntry(
+        { input: 100, cost: { total: 0.2 } },
+        { input: 200, cost: { total: 0.7 } },
+        cfg,
+        undefined,
+        lastCallUsage,
+      );
+      const meta = result.meta.agentMeta!;
+      const reply = buildReplyUsageState({
+        config: cfg,
+        agentDir: "/nonexistent-fallback-accounting",
+        agentId: "main",
+        sessionId: "session-1",
+        usage: meta.usage,
+        lastCallUsage: meta.lastCallUsage,
+      });
+      expect(meta.usage?.input).toBe(300);
+      expect(reply.contextUsedTokens).toBeUndefined();
+      expect(meta.lastCallUsage).toEqual(lastCallUsage ?? undefined);
+    },
+  );
   it.each([
     { name: "recorded costs", primary: { total: 0.2 }, fallback: { total: 0.7 }, expected: 0.9 },
     {
@@ -224,7 +251,7 @@ describe("fallback candidate accounting", () => {
     });
     const { result } = await runEmbeddedAgentEntry({
       selection: { cfg, provider: "primary-provider", model: "primary-model" },
-      identity: { runId: "run-accounting-throw", sessionId: "session-1" },
+      identity: { runId: "run-accounting-throw", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
       sessionOverride: { kind: "preserve" },

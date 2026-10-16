@@ -73,6 +73,7 @@ import {
 import { SessionManager } from "../sessions/session-manager.js";
 import { redactRunIdentifier } from "../workspace-run.js";
 import { runEmbeddedAgentViaCliBackendIfEligible } from "./cli-backend-dispatch.js";
+import { mergeCompletedAgentUsage } from "./completed-usage.js";
 import { waitForDeferredTurnMaintenanceForSession } from "./context-engine-maintenance.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
@@ -101,12 +102,7 @@ import {
 } from "./run/runtime-resolution.js";
 import { prepareEmbeddedRunSession } from "./run/session-bootstrap.js";
 import type { EmbeddedAgentRunResult } from "./types.js";
-import {
-  createUsageAccumulator,
-  mergeAttemptRunStatsIntoAccumulator,
-  mergeUsageIntoAccumulator,
-  toNormalizedUsage,
-} from "./usage-accumulator.js";
+import { createUsageAccumulator, toNormalizedUsage } from "./usage-accumulator.js";
 
 const EMPTY_EMBEDDED_AGENT_CONFIG: OpenClawConfig = Object.freeze({});
 
@@ -648,15 +644,17 @@ async function runEmbeddedAgentForSession(
               : run());
             const continuation = refresh.takeContinuation();
             if (refreshed || continuation) {
-              mergeUsageIntoAccumulator(usage, result.meta.agentMeta?.usage);
-              mergeUsageIntoAccumulator(
+              mergeCompletedAgentUsage({
+                usage,
                 diagnosticUsage,
-                result.meta.agentMeta?.diagnosticUsage ?? result.meta.agentMeta?.usage,
-              );
-              mergeAttemptRunStatsIntoAccumulator(usage, result.meta.agentMeta ?? {});
+                agentMeta: result.meta.agentMeta,
+                config: params.config ?? EMPTY_EMBEDDED_AGENT_CONFIG,
+                agentDir: params.agentDir,
+              });
             }
             if (!continuation) {
               if (refreshed && result.meta.agentMeta) {
+                const aggregatedUsage = toNormalizedUsage(usage);
                 result = {
                   ...result,
                   meta: {
@@ -664,7 +662,9 @@ async function runEmbeddedAgentForSession(
                     durationMs: Date.now() - started,
                     agentMeta: {
                       ...result.meta.agentMeta,
-                      usage: toNormalizedUsage(usage),
+                      usage: aggregatedUsage
+                        ? { ...aggregatedUsage, contextUsage: { state: "unavailable" } }
+                        : undefined,
                       diagnosticUsage: toNormalizedUsage(diagnosticUsage),
                       costUsd:
                         usage.cost && usage.cost !== "unavailable" ? usage.cost.total : undefined,
