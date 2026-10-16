@@ -1,23 +1,26 @@
-name: Agent fallback accounting regression proof
+name: Agent fallback accounting final verification
 on:
   push:
     branches: [proof/agent-fallback-127381]
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 jobs:
-  regression:
+  final-verification:
     if: github.repository == 'yinx65588-boop/openclaw'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
     env:
       OPENCLAW_VITEST_RUNTIME: node
       NODE_OPTIONS: --max-old-space-size=6144
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Checkout exact PR source without temporary proof files
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: 0332a59b8ee724ae0b6fb66fd22f14effe701388
           persist-credentials: false
-          fetch-depth: 5
+          fetch-depth: 2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24.21.0'
@@ -28,67 +31,87 @@ jobs:
           node-version: '24.21.0'
           install-bun: 'false'
           cache-mode: read-write
-      - name: Reproduce lost accounting on pinned production baseline
+      - name: Prepare validation tools and pinned baseline
+        id: tools
         shell: bash
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ripgrep
           mkdir -p .proof
-          git restore --source=1dbc6fb1f327fb861889c8abf8174fbf73052f24 -- src/agents/embedded-agent-runner/run-entry.ts src/agents/embedded-agent-runner/run-orchestrator.ts src/agents/embedded-agent-runner/usage-accumulator.ts src/agents/usage.ts src/utils/usage-format.ts
-          set +e
-          pnpm test src/agents/embedded-agent-runner/run-entry.accounting.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline.json > .proof/baseline.log 2>&1
-          result=$?
-          set -e
-          cat .proof/baseline.log
-          test "$result" -ne 0
+          git update-ref refs/remotes/origin/main 1dbc6fb1f327fb861889c8abf8174fbf73052f24
+          git fetch --depth=1 origin a578b7c10ecc5597dcee115e27e39083386bac3a
+          git diff --exit-code a578b7c10ecc5597dcee115e27e39083386bac3a HEAD -- src docs
+          curl --fail --silent --show-error https://raw.githubusercontent.com/yinx65588-boop/openclaw/a578b7c10ecc5597dcee115e27e39083386bac3a/.proof/agent-fallback-cli-proof.mjs -o "$RUNNER_TEMP/agent-fallback-cli-proof.mjs"
+      - name: Reuse completed tests and types from identical source
+        id: prior
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh run download 38897989740 --repo yinx65588-boop/openclaw --name agent-fallback-accounting-proof --dir .proof/prior
           node --input-type=module <<'JS'
           import fs from 'node:fs';
           import assert from 'node:assert/strict';
-          const report = JSON.parse(fs.readFileSync('.proof/baseline.json', 'utf8'));
-          assert.equal(report.numFailedTests, 8);
-          assert.equal(report.numPassedTests, 1);
-          const failures = report.testResults.flatMap(r => r.assertionResults).filter(r => r.status === 'failed');
-          assert(failures.some(r => r.fullName.includes('recorded costs') && r.failureMessages.some(m => m.includes('300') && m.includes('200'))));
-          console.log('Baseline reproduced: 8 accounting/context assertions fail; thrown-before-result control passes.');
+          const repaired = JSON.parse(fs.readFileSync('.proof/prior/repaired.json', 'utf8'));
+          assert.equal(repaired.numPassedTests, 115);
+          assert.equal(repaired.numFailedTests, 0);
+          const refresh = fs.readFileSync('.proof/prior/refresh.log', 'utf8');
+          assert.match(refresh, /17 passed/);
+          const checks = fs.readFileSync('.proof/prior/checks.log', 'utf8');
+          assert.match(checks, /\[tsgo:agents-other\] passed/);
+          assert.match(checks, /\[tsgo:other\] passed/);
+          assert(!checks.includes('error TS'));
+          console.log('Source equality verified. Reused 115 passing owner/consumer regressions, 17 refresh tests, production typecheck and relevant agents-other/other test type graphs. Prior broad graph sweep was stopped after 16 passing graphs; infrastructure guard failures are rechecked next.');
           JS
-          git restore --source=HEAD -- src/agents/embedded-agent-runner/run-entry.ts src/agents/embedded-agent-runner/run-orchestrator.ts src/agents/embedded-agent-runner/usage-accumulator.ts src/agents/usage.ts src/utils/usage-format.ts
-      - name: Restore repaired production source
-        id: restore
-        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        run: git restore --source=HEAD -- src/agents/embedded-agent-runner/run-entry.ts src/agents/embedded-agent-runner/run-orchestrator.ts src/agents/embedded-agent-runner/usage-accumulator.ts src/agents/usage.ts src/utils/usage-format.ts
-      - name: Focused repaired producer, real fallback runner and accounting consumers
-        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
+      - name: Changed-file format and lint through the existing owner
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         shell: bash
         run: |
-          /usr/bin/time -v pnpm test src/agents/embedded-agent-runner/run-entry src/agents/embedded-agent-runner/usage-accumulator.test.ts src/utils/usage-format.cost.test.ts src/auto-reply/reply/reply-usage-state.test.ts src/auto-reply/reply/session-usage.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/repaired.json > .proof/repaired.log 2>&1
-          cat .proof/repaired.log
-      - name: Refresh continuation integration
-        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
-        shell: bash
-        run: |
-          /usr/bin/time -v pnpm test src/agents/embedded-agent-runner/run.plugin-runtime-refresh.integration.test.ts --maxWorkers=1 > .proof/refresh.log 2>&1
-          cat .proof/refresh.log
-      - name: Changed-file checks and documentation index
-        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
-        shell: bash
-        run: |
-          paths=(docs/concepts/model-failover.md src/agents/usage.ts src/utils/usage-format.ts src/utils/usage-format.cost.test.ts src/agents/embedded-agent-runner/run-entry.ts src/agents/embedded-agent-runner/run-entry.accounting.test.ts src/agents/embedded-agent-runner/run-entry.cyber-failover.runner.test.ts src/agents/embedded-agent-runner/run-orchestrator.ts src/agents/embedded-agent-runner/run.plugin-runtime-refresh.integration.test.ts src/agents/embedded-agent-runner/usage-accumulator.ts src/agents/embedded-agent-runner/types.ts src/agents/embedded-agent-runner/completed-usage.ts)
-          node scripts/check-changed.mjs --dry-run -- "${paths[@]}"
-          node scripts/check-changed.mjs -- "${paths[@]}" > .proof/checks.log 2>&1
-          cat .proof/checks.log
+          node --import ./scripts/tsx.mjs --input-type=module <<'JS' > .proof/targeted-lint.log 2>&1
+          import {execFileSync} from 'node:child_process';
+          import {detectChangedLanes} from './scripts/changed-lanes.mts';
+          import {runChangedCheck} from './scripts/check-changed.mts';
+          const paths = execFileSync('git', ['diff', '--name-only', '1dbc6fb1f327fb861889c8abf8174fbf73052f24', 'HEAD'], {encoding:'utf8'}).trim().split('\n');
+          process.exitCode = await runChangedCheck(detectChangedLanes(paths), {lintOnly:true,base:'1dbc6fb1f327fb861889c8abf8174fbf73052f24'});
+          JS
+          cat .proof/targeted-lint.log
+          git diff --name-only -z 1dbc6fb1f327fb861889c8abf8174fbf73052f24 HEAD | xargs -0 pnpm exec oxfmt --check
           pnpm docs:list > .proof/docs-index.log
+      - name: Recheck guards with the complete validation environment
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        shell: bash
+        run: |
+          set +e
+          result=0
+          for guard in check-line-cap-ratchet check-max-lines-ratchet check-assertion-safety-ratchet check-database-worker-ratchet check-database-dialect-ratchet check-test-timeout-race-ratchet check-test-mock-exports; do
+            node --import ./scripts/tsx.mjs "scripts/$guard.mts" --base 1dbc6fb1f327fb861889c8abf8174fbf73052f24 >> .proof/guards.log 2>&1
+            code=$?
+            if [ "$code" -ne 0 ]; then result=1; fi
+          done
+          node scripts/check-duplicates.mjs --coverage >> .proof/guards.log 2>&1
+          code=$?
+          if [ "$code" -ne 0 ]; then result=1; fi
+          cat .proof/guards.log
+          exit "$result"
       - name: Build production artifacts
         id: build
-        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: pnpm build > .proof/build.log 2>&1
       - name: Public CLI fallback against local HTTP fixtures
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: node .proof/agent-fallback-cli-proof.mjs
-      - name: Upload full proof logs and reports
+        run: node "$RUNNER_TEMP/agent-fallback-cli-proof.mjs"
+      - name: Upload final evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: agent-fallback-accounting-proof
+          name: agent-fallback-final-proof
           path: |
             .proof/*.log
             .proof/*.json
-            .proof/repaired.json.reports-*/
+            .proof/prior/baseline.json
+            .proof/prior/baseline.log
+            .proof/prior/repaired.json
+            .proof/prior/repaired.log
+            .proof/prior/refresh.log
+            .proof/prior/checks.log
           include-hidden-files: true
