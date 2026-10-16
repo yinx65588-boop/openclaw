@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
@@ -43,41 +44,51 @@ try {
       cost: { input, output, cacheRead: 0, cacheWrite: 0 } }],
   });
   const configPath = path.join(root, 'openclaw.json');
+  const sessionId = randomUUID();
   await fs.writeFile(configPath, JSON.stringify({
     plugins: { enabled: false }, env: { shellEnv: { enabled: false } },
-    agents: { defaults: { systemAgent: { agentId: 'main' }, model: { primary: 'proof-primary/model-a' },
+    agents: { defaults: { workspace, systemAgent: { agentId: 'main' }, model: { primary: 'proof-primary/model-a', fallbacks: ['proof-fallback/model-b'] },
       models: { 'proof-primary/model-a': { agentRuntime: { id: 'openclaw' } }, 'proof-fallback/model-b': { agentRuntime: { id: 'openclaw' } } } } },
     models: { providers: { 'proof-primary': provider('model-a', 1, 2), 'proof-fallback': provider('model-b', 10, 20) } },
   }));
-  const args = ['--silent', 'openclaw', 'agent', 'exec', 'Reply briefly without tools.', '--config', configPath,
-    '--cwd', workspace, '--state-dir', stateDir, '--model', 'proof-primary/model-a', '--fallback', 'proof-fallback/model-b',
-    '--code-mode', 'direct', '--thinking', 'off', '--timeout', '45', '--json'];
-  const child = spawn('pnpm', args, { env: { ...process.env, OPENCLAW_STATE_DIR: stateDir, OPENCLAW_CONFIG_PATH: configPath }, stdio: ['ignore', 'pipe', 'pipe'] });
+  async function runCli(args, label) {
+  const child = spawn('pnpm', ['--silent', 'openclaw', ...args], { env: { ...process.env, OPENCLAW_STATE_DIR: stateDir, OPENCLAW_CONFIG_PATH: configPath }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = '';
   child.stdout.on('data', chunk => stdout += chunk);
   child.stderr.on('data', chunk => stderr += chunk);
   const timeout = setTimeout(() => child.kill('SIGTERM'), 180000);
   const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
   clearTimeout(timeout);
-  await fs.writeFile('.proof/cli.stdout.log', stdout);
-  await fs.writeFile('.proof/cli.stderr.log', stderr);
+  await fs.writeFile(`.proof/${label}.stdout.log`, stdout);
+  await fs.writeFile(`.proof/${label}.stderr.log`, stderr);
   await fs.writeFile('.proof/cli-requests.json', JSON.stringify(requests, null, 2));
   assert.equal(code, 0, stderr.slice(-5000) + '\n' + stdout.slice(-3000));
-  const envelope = JSON.parse(stdout.slice(stdout.indexOf('{')));
-  assert.equal(envelope.ok, true);
-  assert.equal(envelope.provider, 'proof-fallback');
-  assert.equal(envelope.model, 'model-b');
-  assert.equal(envelope.final, 'Recovered after fallback.');
+  return JSON.parse(stdout.slice(stdout.indexOf('{')));
+  }
+  const result = await runCli(['agent', '--local', '--agent', 'main', '--session-id', sessionId,
+    '--message', 'Reply briefly without tools.', '--thinking', 'off', '--timeout', '45', '--json'], 'cli');
+  const meta = result.meta.agentMeta;
+  assert.equal(meta.provider, 'proof-fallback');
+  assert.equal(meta.model, 'model-b');
+  assert(result.payloads.some(payload => payload.text === 'Recovered after fallback.'));
   assert(requests.some(r => r.model === 'model-a'));
   assert(requests.some(r => r.model === 'model-b'));
   const input = requests.reduce((sum, r) => sum + r.input, 0);
   const output = requests.reduce((sum, r) => sum + r.output, 0);
   const cost = requests.reduce((sum, r) => sum + (r.input * (r.model === 'model-a' ? 1 : 10) + r.output * (r.model === 'model-a' ? 2 : 20)) / 1e6, 0);
-  assert.equal(envelope.usage.input, input);
-  assert.equal(envelope.usage.output, output);
-  assert(Math.abs(envelope.costUsd - cost) < 1e-9);
-  await fs.writeFile('.proof/cli-result.json', JSON.stringify({ requests, input, output, expectedCostUsd: cost, envelope }, null, 2));
-  console.log(JSON.stringify({ proof: 'public pnpm openclaw agent exec with local HTTP provider fixtures', requests, input, output, costUsd: envelope.costUsd, winner: envelope.provider + '/' + envelope.model }));
+  assert.equal(meta.usage.input, input);
+  assert.equal(meta.usage.output, output);
+  assert(Math.abs(meta.costUsd - cost) < 1e-9);
+  assert.equal(meta.lastCallUsage.input, 200);
+  assert.equal(meta.lastCallUsage.output, 20);
+  const sessions = await runCli(['sessions', '--agent', 'main', '--json'], 'sessions');
+  const session = sessions.sessions.find(row => row.sessionId === sessionId);
+  assert(session, 'completed local session must be persisted');
+  assert.equal(session.inputTokens, input);
+  assert.equal(session.outputTokens, output);
+  assert.equal(session.totalTokens, 200, 'live context belongs to the winner');
+  await fs.writeFile('.proof/cli-result.json', JSON.stringify({ requests, input, output, expectedCostUsd: cost, result, session }, null, 2));
+  console.log(JSON.stringify({ proof: 'public configured fallback via pnpm openclaw agent --local and sessions --json with local HTTP fixtures', requests, input, output, costUsd: meta.costUsd, winner: meta.provider + '/' + meta.model, contextTokens: session.totalTokens }));
 } finally {
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));

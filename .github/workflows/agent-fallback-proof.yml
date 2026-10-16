@@ -1,4 +1,4 @@
-name: Agent fallback accounting final verification
+name: Agent fallback accounting regression proof
 on:
   push:
     branches: [proof/agent-fallback-127381]
@@ -6,21 +6,21 @@ on:
 permissions:
   contents: read
   actions: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+  PROOF_BASE: 1dbc6fb1f327fb861889c8abf8174fbf73052f24
 jobs:
-  final-verification:
+  runtime:
     if: github.repository == 'yinx65588-boop/openclaw'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      OPENCLAW_VITEST_RUNTIME: node
-      NODE_OPTIONS: --max-old-space-size=6144
     steps:
-      - name: Checkout exact PR source without temporary proof files
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 0332a59b8ee724ae0b6fb66fd22f14effe701388
+          ref: d3dda7a364c07daa57f6762c637f38cc49fe8de1
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 3
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24.21.0'
@@ -31,39 +31,82 @@ jobs:
           node-version: '24.21.0'
           install-bun: 'false'
           cache-mode: read-write
-      - name: Prepare validation tools and pinned baseline
+      - name: Preserve unchanged baseline regression evidence
         id: tools
-        shell: bash
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ripgrep
-          mkdir -p .proof
-          git update-ref refs/remotes/origin/main 1dbc6fb1f327fb861889c8abf8174fbf73052f24
-          git fetch --depth=1 origin a578b7c10ecc5597dcee115e27e39083386bac3a
-          git diff --exit-code a578b7c10ecc5597dcee115e27e39083386bac3a HEAD -- src docs
-          curl --fail --silent --show-error https://raw.githubusercontent.com/yinx65588-boop/openclaw/a578b7c10ecc5597dcee115e27e39083386bac3a/.proof/agent-fallback-cli-proof.mjs -o "$RUNNER_TEMP/agent-fallback-cli-proof.mjs"
-      - name: Reuse completed tests and types from identical source
-        id: prior
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh run download 38897989740 --repo yinx65588-boop/openclaw --name agent-fallback-accounting-proof --dir .proof/prior
+          mkdir -p .proof
+          git fetch --depth=1 origin a578b7c10ecc5597dcee115e27e39083386bac3a
+          git diff --exit-code a578b7c10ecc5597dcee115e27e39083386bac3a HEAD -- src/agents/embedded-agent-runner/run-entry.accounting.test.ts
+          gh run download 38897989740 --repo yinx65588-boop/openclaw --name agent-fallback-accounting-proof --dir "$RUNNER_TEMP/prior"
+          cp "$RUNNER_TEMP/prior/baseline.json" "$RUNNER_TEMP/prior/baseline.log" .proof/
           node --input-type=module <<'JS'
           import fs from 'node:fs';
           import assert from 'node:assert/strict';
-          const repaired = JSON.parse(fs.readFileSync('.proof/prior/repaired.json', 'utf8'));
-          assert.equal(repaired.numPassedTests, 115);
-          assert.equal(repaired.numFailedTests, 0);
-          const refresh = fs.readFileSync('.proof/prior/refresh.log', 'utf8');
-          assert.match(refresh, /17 passed/);
-          const checks = fs.readFileSync('.proof/prior/checks.log', 'utf8');
-          assert.match(checks, /\[tsgo:agents-other\] passed/);
-          assert.match(checks, /\[tsgo:other\] passed/);
-          assert(!checks.includes('error TS'));
-          console.log('Source equality verified. Reused 115 passing owner/consumer regressions, 17 refresh tests, production typecheck and relevant agents-other/other test type graphs. Prior broad graph sweep was stopped after 16 passing graphs; infrastructure guard failures are rechecked next.');
+          const report = JSON.parse(fs.readFileSync('.proof/baseline.json', 'utf8'));
+          assert.equal(report.numFailedTests, 8);
+          assert.equal(report.numPassedTests, 1);
+          console.log('Reused baseline: same regression fixture, 8 intended failures and 1 thrown-before-result control pass.');
           JS
-      - name: Changed-file format and lint through the existing owner
+          curl --fail --silent --show-error "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/.proof/agent-fallback-cli-proof.mjs" -o "$RUNNER_TEMP/agent-fallback-cli-proof.mjs"
+      - name: Focused accounting entry and consumer regressions
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: pnpm test src/agents/embedded-agent-runner/run-entry src/agents/embedded-agent-runner/usage-accumulator.test.ts src/utils/usage-format.cost.test.ts src/auto-reply/reply/reply-usage-state.test.ts src/auto-reply/reply/session-usage.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/repaired.json > .proof/repaired.log 2>&1
+      - name: Plugin refresh integration regressions
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: pnpm test src/agents/embedded-agent-runner/run.plugin-runtime-refresh.integration.test.ts --maxWorkers=1 > .proof/refresh.log 2>&1
+      - name: Production build
+        id: build
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: pnpm build > .proof/build.log 2>&1
+      - name: Public configured fallback and persisted session proof
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node "$RUNNER_TEMP/agent-fallback-cli-proof.mjs"
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: agent-fallback-runtime-proof
+          path: |
+            .proof/*.log
+            .proof/*.json
+          include-hidden-files: true
+  static:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: d3dda7a364c07daa57f6762c637f38cc49fe8de1
+          persist-credentials: false
+          fetch-depth: 3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+      - name: Install locked dependencies on separate remote runner
+        id: deps
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: read-write
+      - name: Prepare complete guard environment
+        id: tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ripgrep
+          mkdir -p .proof
+          git update-ref refs/remotes/origin/main "$PROOF_BASE"
+      - name: Production typecheck
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: pnpm tsgo:core > .proof/types-core.log 2>&1
+      - name: Changed test owner type graphs
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: node scripts/run-tsgo-core-test-shards.mjs --changed-paths-json '["src/agents/embedded-agent-runner/run-entry.accounting.test.ts","src/agents/embedded-agent-runner/run-entry.cyber-failover.runner.test.ts","src/agents/embedded-agent-runner/run.plugin-runtime-refresh.integration.test.ts","src/utils/usage-format.cost.test.ts"]' > .proof/types-tests.log 2>&1
+      - name: Changed-file owner lint and format
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         shell: bash
         run: |
@@ -71,47 +114,55 @@ jobs:
           import {execFileSync} from 'node:child_process';
           import {detectChangedLanes} from './scripts/changed-lanes.mts';
           import {runChangedCheck} from './scripts/check-changed.mts';
-          const paths = execFileSync('git', ['diff', '--name-only', '1dbc6fb1f327fb861889c8abf8174fbf73052f24', 'HEAD'], {encoding:'utf8'}).trim().split('\n');
-          process.exitCode = await runChangedCheck(detectChangedLanes(paths), {lintOnly:true,base:'1dbc6fb1f327fb861889c8abf8174fbf73052f24'});
+          const paths = execFileSync('git', ['diff', '--name-only', process.env.PROOF_BASE, 'HEAD'], {encoding:'utf8'}).trim().split('\n');
+          process.exitCode = await runChangedCheck(detectChangedLanes(paths), {lintOnly:true,base:process.env.PROOF_BASE});
           JS
           cat .proof/targeted-lint.log
-          git diff --name-only -z 1dbc6fb1f327fb861889c8abf8174fbf73052f24 HEAD | xargs -0 pnpm exec oxfmt --check
+          git diff --name-only -z "$PROOF_BASE" HEAD | xargs -0 pnpm exec oxfmt --check > .proof/format.log 2>&1
           pnpm docs:list > .proof/docs-index.log
-      - name: Recheck guards with the complete validation environment
+      - name: Guards with exact inherited-failure control
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         shell: bash
         run: |
           set +e
           result=0
           for guard in check-line-cap-ratchet check-max-lines-ratchet check-assertion-safety-ratchet check-database-worker-ratchet check-database-dialect-ratchet check-test-timeout-race-ratchet check-test-mock-exports; do
-            node --import ./scripts/tsx.mjs "scripts/$guard.mts" --base 1dbc6fb1f327fb861889c8abf8174fbf73052f24 >> .proof/guards.log 2>&1
+            node --import ./scripts/tsx.mjs "scripts/$guard.mts" --base "$PROOF_BASE" > ".proof/$guard.candidate.log" 2>&1
             code=$?
-            if [ "$code" -ne 0 ]; then result=1; fi
+            echo "$code" > ".proof/$guard.candidate.status"
+            echo "$guard candidate exit=$code" | tee -a .proof/guards-summary.log
+            if [ "$code" -ne 0 ] && [ "$guard" != check-max-lines-ratchet ] && [ "$guard" != check-assertion-safety-ratchet ]; then result=1; fi
           done
-          node scripts/check-duplicates.mjs --coverage >> .proof/guards.log 2>&1
-          code=$?
-          if [ "$code" -ne 0 ]; then result=1; fi
-          cat .proof/guards.log
+          node scripts/check-duplicates.mjs --coverage > .proof/duplicates.log 2>&1
+          if [ "$?" -ne 0 ]; then result=1; fi
+          # No tests, compiler or other checker is running during this control.
+          # Restore both index and worktree so the guards inventory the actual baseline.
+          git restore --source="$PROOF_BASE" --staged --worktree -- . || exit 1
+          for guard in check-max-lines-ratchet check-assertion-safety-ratchet; do
+            node --import ./scripts/tsx.mjs "scripts/$guard.mts" --base "$PROOF_BASE" > ".proof/$guard.baseline.log" 2>&1
+            code=$?
+            echo "$code" > ".proof/$guard.baseline.status"
+            echo "$guard baseline exit=$code" | tee -a .proof/guards-summary.log
+          done
+          git restore --source=HEAD --staged --worktree -- . || exit 1
+          git diff --exit-code || exit 1
+          git diff --cached --exit-code || exit 1
+          for guard in check-max-lines-ratchet check-assertion-safety-ratchet; do
+            if [ "$(cat ".proof/$guard.candidate.status")" != "$(cat ".proof/$guard.baseline.status")" ] || ! diff -u ".proof/$guard.baseline.log" ".proof/$guard.candidate.log"; then
+              echo "Unexpected candidate difference in $guard" | tee -a .proof/guards-summary.log
+              result=1
+            else
+              echo "$guard: identical baseline failure retained; no allowances or unrelated source changed." | tee -a .proof/guards-summary.log
+            fi
+          done
+          cat .proof/guards-summary.log
           exit "$result"
-      - name: Build production artifacts
-        id: build
-        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
-        run: pnpm build > .proof/build.log 2>&1
-      - name: Public CLI fallback against local HTTP fixtures
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: node "$RUNNER_TEMP/agent-fallback-cli-proof.mjs"
-      - name: Upload final evidence
+      - name: Upload static evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: agent-fallback-final-proof
+          name: agent-fallback-static-proof
           path: |
             .proof/*.log
-            .proof/*.json
-            .proof/prior/baseline.json
-            .proof/prior/baseline.log
-            .proof/prior/repaired.json
-            .proof/prior/repaired.log
-            .proof/prior/refresh.log
-            .proof/prior/checks.log
+            .proof/*.status
           include-hidden-files: true
