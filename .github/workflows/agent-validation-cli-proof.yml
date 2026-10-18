@@ -1,0 +1,40 @@
+name: Agent validation warning public CLI proof
+on:
+  push:
+    branches: [proof/agent-validation-cli-176066]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  cli:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: read-write
+      - name: Build reviewed public CLI
+        run: |
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/proof-sha.txt
+          git rev-parse HEAD^ > .proof/reviewed-source-sha.txt
+          pnpm build > .proof/build.log 2>&1
+      - name: Exercise native schema validation through the public local CLI
+        run: node .proof/agent-validation-cli-proof.mjs | tee .proof/validation-cli-summary.log
+      - name: Upload public CLI evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: agent-validation-cli-proof
+          path: .proof/
+          include-hidden-files: true
