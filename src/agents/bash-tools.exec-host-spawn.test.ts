@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -31,6 +32,7 @@ describe.runIf(process.platform !== "win32" && fs.existsSync(zsh))("zsh host exe
 
       // Run the production-prepared argv in a real shell. This verifies PTY
       // argument preparation, without claiming to exercise a native PTY here.
+      assert(prepared.argv[0], "exec must provide a shell executable");
       const result = spawnSync(prepared.argv[0], prepared.argv.slice(1), {
         cwd,
         env,
@@ -47,6 +49,7 @@ describe.runIf(process.platform !== "win32" && fs.existsSync(zsh))("zsh host exe
     fs.writeFileSync(path.join(cwd, "match-one.txt"), "");
     const command = "printf '%s\\n' $options[rcs] ~ {one,two} match-*.txt";
     const prepared = await prepareHostExecSpawn({ command, workdir: cwd, env, usePty: false });
+    assert(prepared.argv[0], "exec must provide a shell executable");
     const result = spawnSync(prepared.argv[0], prepared.argv.slice(1), {
       cwd,
       env,
