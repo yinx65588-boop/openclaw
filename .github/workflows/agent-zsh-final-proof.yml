@@ -1,0 +1,84 @@
+name: Agent zsh final regression proof
+on:
+  push:
+    branches: [proof/agent-zsh-final-126521]
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+  PROOF_BASE: adb12365084a81f7f0bb4604ed8fa04b735071cc
+jobs:
+  native:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: read-write
+      - name: Baseline with identical regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/source-sha.txt
+          git ls-tree HEAD src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts > .proof/source-blobs.txt
+          sw_vers > .proof/mac-version.txt
+          /bin/zsh --version >> .proof/mac-version.txt
+          cp src/agents/shell-utils.ts .proof/fixed-shell-utils.ts
+          git fetch --no-tags --depth=1 origin "$PROOF_BASE"
+          git restore --source="$PROOF_BASE" --worktree -- src/agents/shell-utils.ts
+          set +e
+          pnpm test src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline.json > .proof/baseline.log 2>&1
+          result=$?
+          set -e
+          cp .proof/fixed-shell-utils.ts src/agents/shell-utils.ts
+          echo "$result" > .proof/baseline.status
+          node --input-type=module <<'JS' | tee .proof/baseline-summary.log
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const r=JSON.parse(fs.readFileSync('.proof/baseline.json','utf8'));
+          const failed=r.testResults.flatMap(s=>s.assertionResults??[]).filter(a=>a.status==='failed');
+          console.log(JSON.stringify({failed:r.numFailedTests,passed:r.numPassedTests,failures:failed.map(a=>({name:a.fullName,messages:a.failureMessages}))},null,2));
+          assert.equal(r.numFailedTests,4);
+          assert.equal(failed.filter(a=>a.fullName.includes('finishes a command chain')).length,2);
+          assert(failed.every(a=>a.fullName.includes('finishes a command chain')||a.fullName.includes('resolves SHELL=')||a.fullName.includes('explicit custom shell path')));
+          assert.equal(fs.readFileSync('.proof/baseline.status','utf8').trim(),'1');
+          JS
+      - name: Fixed native owner and sibling regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/time -l pnpm test src/agents/shell-utils.test.ts src/agents/shell-snapshot.test.ts src/agents/bash-tools.exec-host-spawn.test.ts src/agents/bash-tools.exec-runtime.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/repaired.json > .proof/repaired.log 2>&1
+          node --input-type=module <<'JS' | tee .proof/repaired-summary.log
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const r=JSON.parse(fs.readFileSync('.proof/repaired.json','utf8'));
+          console.log(JSON.stringify({failed:r.numFailedTests,passed:r.numPassedTests,files:r.testResults.map(t=>({name:t.name,status:t.status,ms:t.endTime-t.startTime}))},null,2));
+          assert.equal(r.numFailedTests,0);
+          const owner=r.testResults.find(t=>t.name.endsWith('bash-tools.exec-host-spawn.test.ts'));
+          assert(owner);
+          assert.equal(owner.assertionResults.length,5);
+          assert(owner.assertionResults.every(a=>a.status==='passed'));
+          JS
+      - name: Check changed test formatting and lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec oxfmt --threads=1 --check src/agents/bash-tools.exec-host-spawn.test.ts extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts 2>&1 | tee .proof/final-format.log
+          pnpm exec oxlint --type-aware src/agents/bash-tools.exec-host-spawn.test.ts extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts 2>&1 | tee .proof/final-lint.log
+          git diff --check
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: agent-zsh-final-proof
+          path: .proof/
+          include-hidden-files: true
