@@ -1,0 +1,45 @@
+name: Agent zsh installed CLI upgrade proof
+on:
+  push:
+    branches: [proof/agent-zsh-cli-126521]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+  REVIEWED_SOURCE: 99d4aa60f95ca24932fd0cc13b717c9df659e75a
+jobs:
+  cli:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Build an installable package from reviewed production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/proof-sha.txt
+          git diff --exit-code "$REVIEWED_SOURCE" HEAD -- src packages extensions
+          sw_vers > .proof/platform.txt
+          /bin/zsh --version >> .proof/platform.txt
+          node scripts/package-openclaw-for-docker.mjs --allow-unreleased-changelog --output-dir "$RUNNER_TEMP/zsh-package" --output-name repaired-openclaw.tgz > .proof/package-build.log 2>&1
+      - name: Execute stable and upgraded public CLI through real zsh
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .proof/agent-zsh-cli-proof.mjs "$RUNNER_TEMP/zsh-package/repaired-openclaw.tgz" | tee .proof/terminal-summary.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: agent-zsh-cli-upgrade-proof
+          path: .proof/
+          include-hidden-files: true
