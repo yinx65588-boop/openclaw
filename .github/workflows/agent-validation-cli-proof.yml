@@ -8,6 +8,7 @@ permissions:
 env:
   OPENCLAW_VITEST_RUNTIME: node
   NODE_OPTIONS: --max-old-space-size=6144
+  REVIEWED_SOURCE: 924b2e710a0020e9aac5a406c86f853cd320c739
 jobs:
   cli:
     if: github.repository == 'yinx65588-boop/openclaw'
@@ -27,10 +28,14 @@ jobs:
         run: |
           mkdir -p .proof
           git rev-parse HEAD > .proof/proof-sha.txt
-          git rev-parse HEAD^ > .proof/reviewed-source-sha.txt
+          git rev-parse "$REVIEWED_SOURCE" > .proof/reviewed-source-sha.txt
+          git diff --exit-code "$REVIEWED_SOURCE" HEAD -- src packages extensions
           pnpm build > .proof/build.log 2>&1
       - name: Exercise native schema validation through the public local CLI
-        run: node .proof/agent-validation-cli-proof.mjs | tee .proof/validation-cli-summary.log
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .proof/agent-validation-cli-proof.mjs | tee .proof/validation-cli-summary.log
       - name: Upload public CLI evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

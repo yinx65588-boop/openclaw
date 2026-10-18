@@ -21,7 +21,14 @@ const server = http.createServer(async (request, response) => {
     const body = JSON.parse(raw);
     const toolResults = body.messages.filter(message => message.role === 'tool');
     requests.push({ number: requests.length + 1, toolResults: toolResults.map(message => message.content) });
-    const first = toolResults.length === 0;
+    const first = requests.length === 1;
+    if (requests.length > 2) {
+      // A provider unable to author the isolated final reply must leave the
+      // genuine tool failure visible. This is an intentional failed-turn case.
+      response.writeHead(503, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { message: 'Synthetic finalization unavailable', type: 'server_error' } }));
+      return;
+    }
     if (first) assert(body.tools.some(tool => tool.function.name === 'process'), 'real process tool must be advertised');
     const delta = first
       ? { role: 'assistant', tool_calls: [{ index: 0, id: 'call_schema_rejection', type: 'function', function: { name: 'process', arguments: JSON.stringify({ action: 'delete', private: 'PRIVATE_ARGUMENT_FIXTURE' }) } }] }
@@ -70,14 +77,14 @@ try {
   await fs.writeFile('.proof/validation-cli.stderr.log', stderr);
   await fs.writeFile('.proof/validation-cli.requests.json', JSON.stringify(requests, null, 2));
   assert.ifError(fixtureError);
-  assert.equal(code, 0, stderr.slice(-4000) + '\n' + stdout.slice(-2000));
+  assert.equal(code, 1, 'the intentionally failed finalization must produce a failed CLI turn');
   const result = JSON.parse(stdout.slice(stdout.indexOf('{')));
   assert(requests.some(request => request.toolResults.some(text => text.includes('Validation failed for tool'))), 'actual schema-rejected result must be returned to the HTTP provider');
   assert(result.payloads.some(payload => payload.text === '⚠️ Process failed: invalid arguments' && payload.isError === true), 'public CLI must expose the corrected fallback warning');
   assert(!JSON.stringify(result.payloads).includes('PRIVATE_ARGUMENT_FIXTURE'));
   await fs.writeFile('.proof/validation-cli.result.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify({ proof: 'public local-agent CLI with real HTTP provider adapter and built-in process schema rejection',
-    requests: requests.length, schemaRejected: true, payloads: result.payloads, rawArgumentsPrivate: true }));
+    requests: requests.length, expectedCliExit: code, schemaRejected: true, payloads: result.payloads, rawArgumentsPrivate: true }));
 } finally {
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
