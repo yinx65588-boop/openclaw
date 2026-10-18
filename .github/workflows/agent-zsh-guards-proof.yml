@@ -26,10 +26,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .proof
-          git fetch --no-tags --depth=1 origin "$PROOF_BASE"
+          git fetch --no-tags --depth=1 origin "$PROOF_BASE" 58fe00b00e644958dbb5f87c1febaef707fcfb33
           git rev-parse HEAD > .proof/source-sha.txt
           git diff --exit-code 58fe00b00e644958dbb5f87c1febaef707fcfb33 HEAD -- docs/tools/exec.md package.json src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts
-          node --import ./scripts/tsx.mjs scripts/check-line-cap-ratchet.mts --base "$PROOF_BASE" 2>&1 | tee .proof/line-cap.log
+          node --import ./scripts/tsx.mjs scripts/check-line-cap-ratchet.mts --base "$PROOF_BASE" --no-merge-base 2>&1 | tee .proof/line-cap.log
           git diff --check "$PROOF_BASE" HEAD
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
