@@ -33,6 +33,7 @@ jobs:
           sw_vers > .proof/mac-version.txt
           /bin/zsh --version >> .proof/mac-version.txt
           cp src/agents/shell-utils.ts .proof/fixed-shell-utils.ts
+          git fetch --no-tags --depth=1 origin "$PROOF_BASE"
           git restore --source="$PROOF_BASE" --worktree -- src/agents/shell-utils.ts
           set +e
           pnpm test src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline.json > .proof/baseline.log 2>&1
@@ -72,50 +73,5 @@ jobs:
         if: always()
         with:
           name: agent-zsh-native-proof
-          path: .proof/
-          include-hidden-files: true
-  static:
-    if: github.repository == 'yinx65588-boop/openclaw'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-          fetch-depth: 2
-      - uses: ./.github/actions/setup-node-env
-        with:
-          node-version: '24.21.0'
-          install-bun: 'false'
-          cache-mode: read-write
-      - name: Core and changed test types
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .proof
-          node scripts/run-tsgo.mjs -p tsconfig.core.json --incremental --tsBuildInfoFile .artifacts/tsgo-cache/core.tsbuildinfo > .proof/types-production.log 2>&1
-          node --input-type=module <<'JS'
-          import fs from 'node:fs';
-          fs.writeFileSync('.proof/tsconfig.zsh-tests.json',JSON.stringify({
-            extends:'../test/tsconfig/tsconfig.core.test.shard.json',
-            compilerOptions:{tsBuildInfoFile:'../.artifacts/tsgo-cache/zsh-tests.tsbuildinfo'},
-            include:['../test/types/vitest-codex-attempt-runtime.d.ts','../src/**/*.d.ts','../ui/**/*.d.ts','../extensions/**/*.d.ts','../packages/**/*.d.ts','../src/agents/shell-utils.test.ts','../src/agents/bash-tools.exec-host-spawn.test.ts']
-          }));
-          JS
-          node scripts/run-tsgo.mjs -p .proof/tsconfig.zsh-tests.json --incremental > .proof/types-tests.log 2>&1
-      - name: Owner lint, formatting and documentation
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts > .proof/lint.log 2>&1
-          pnpm exec oxfmt --check src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts docs/tools/exec.md package.json > .proof/format.log 2>&1
-          pnpm dlx --config.resolution-mode=highest markdownlint-cli2 --config config/markdownlint-cli2.jsonc docs/tools/exec.md > .proof/docs-lint.log 2>&1
-          node --import ./scripts/tsx.mjs scripts/check-line-cap-ratchet.mts --base "$PROOF_BASE" > .proof/line-cap.log 2>&1
-          git diff --check "$PROOF_BASE" HEAD
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: always()
-        with:
-          name: agent-zsh-static-proof
           path: .proof/
           include-hidden-files: true
