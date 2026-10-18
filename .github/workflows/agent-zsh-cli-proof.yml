@@ -17,6 +17,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
+      - name: Fetch and verify the reviewed source before installing dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$REVIEWED_SOURCE"
+          git diff --exit-code "$REVIEWED_SOURCE" HEAD -- . ':(exclude).proof/**' ':(exclude).github/workflows/agent-zsh-cli-proof.yml'
       - uses: ./.github/actions/setup-node-env
         with:
           node-version: '24.21.0'
@@ -28,7 +34,6 @@ jobs:
           set -euo pipefail
           mkdir -p .proof
           git rev-parse HEAD > .proof/proof-sha.txt
-          git diff --exit-code "$REVIEWED_SOURCE" HEAD -- src packages extensions
           sw_vers > .proof/platform.txt
           /bin/zsh --version >> .proof/platform.txt
           node scripts/package-openclaw-for-docker.mjs --allow-unreleased-changelog --output-dir "$RUNNER_TEMP/zsh-package" --output-name repaired-openclaw.tgz > .proof/package-build.log 2>&1
