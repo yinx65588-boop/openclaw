@@ -1,0 +1,82 @@
+name: Agent zsh inherited cancellation fixture proof
+on:
+  push:
+    branches: [proof/agent-zsh-ci-repair-126521]
+permissions:
+  contents: read
+env:
+  PROOF_BASE: adb12365084a81f7f0bb4604ed8fa04b735071cc
+  PR_SOURCE: 58fe00b00e644958dbb5f87c1febaef707fcfb33
+  OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+  OPENCLAW_VITEST_MAX_WORKERS: '2'
+  OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+jobs:
+  cancellation:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Preserve repaired fixture and compare baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          cp extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts .proof/repaired.ts
+          git fetch --no-tags --depth=1 origin "$PROOF_BASE" "$PR_SOURCE"
+          git diff --exit-code "$PROOF_BASE" "$PR_SOURCE" -- extensions/crabbox
+          git rev-parse HEAD > .proof/source-sha.txt
+      - name: Observe the same initial heartbeat race on baseline and PR
+        shell: bash
+        env:
+          OPENCLAW_NODE_TEST_GROUPS_JSON: '[{"configs":["test/vitest/vitest.extension-database-workers.config.ts"],"includePatterns":["extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts"],"shard_name":"cancellation-reproduction"}]'
+          OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: '["-t","cancels profile setup"]'
+        run: |
+          set -euo pipefail
+          for source in "$PROOF_BASE" "$PR_SOURCE"; do
+            git restore --source="$source" -- extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts src/agents/shell-utils.ts
+            node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p = 'extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts';
+          const original = fs.readFileSync(p, 'utf8');
+          const target = '    await setImmediate();\n    expect(commandSignal?.aborted).toBe(true);';
+          if (!original.includes(target)) throw new Error('Reproduction boundary missing');
+          fs.writeFileSync(p, original.replace(target,
+            '    await new Promise((resolve) => setTimeout(resolve, 0));\n    await setImmediate();\n    console.log("CANCELLATION_EXTRA_CALLS=" + JSON.stringify(calls.slice(commandCount).map(({ argv }) => argv[1])));\n    expect(commandSignal?.aborted).toBe(true);'));
+          NODE
+            set +e
+            node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts > ".proof/race-$source.log" 2>&1
+            code=$?
+            set -e
+            cat ".proof/race-$source.log"
+            test "$code" -eq 1
+            grep -F 'CANCELLATION_EXTRA_CALLS=["heartbeat"]' ".proof/race-$source.log"
+            grep -F 'to have a length of 4 but got 5' ".proof/race-$source.log"
+          done
+      - name: Verify cancellation fixture and original shard together
+        shell: bash
+        env:
+          OPENCLAW_NODE_TEST_GROUPS_JSON: '[{"configs":["test/vitest/vitest.extension-database-workers.config.ts"],"includePatterns":["extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts","extensions/crabbox/src/crabbox-worker-stop-lifetime.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-allocation.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-cli.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-lifecycle.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-maintenance.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-recovery.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-retirement.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-store.test.ts"],"shard_name":"changed-extensions-config-32"}]'
+        run: |
+          set -euo pipefail
+          git restore --source="$PR_SOURCE" -- src/agents/shell-utils.ts
+          cp .proof/repaired.ts extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/repaired-shard.log
+          pnpm exec oxfmt --threads=1 --check extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts 2>&1 | tee .proof/format.log
+          pnpm exec oxlint --type-aware extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts 2>&1 | tee .proof/lint.log
+          git diff --check
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: agent-zsh-ci-repair-proof
+          path: .proof/
+          include-hidden-files: true
