@@ -1,0 +1,66 @@
+name: Agent zsh Wear fixture ownership proof
+on:
+  push:
+    branches: [proof/agent-zsh-wear-126521]
+permissions:
+  contents: read
+jobs:
+  wear:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: 'false'
+          install-deps: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-android-toolchain
+        id: android
+        with:
+          cache-mode: restore
+          install-native-deps: 'true'
+      - name: Reproduce cross-fixture work execution with original drain
+        env:
+          JAVA_HOME: ${{ steps.android.outputs.gradle-java-home }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/source-sha.txt
+          p=apps/android/wear/src/test/java/ai/openclaw/wear/WearChatEventFlowTest.kt
+          cp "$p" .proof/repaired.kt
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/android/wear/src/test/java/ai/openclaw/wear/WearChatEventFlowTest.kt')
+          s = p.read_text()
+          assert s.count(' && it !in existingLoopers') == 1
+          p.write_text(s.replace(' && it !in existingLoopers', ''))
+          PY
+          set +e
+          (cd apps/android && ./gradlew --no-daemon :wear:testDebugUnitTest --tests 'ai.openclaw.wear.WearChatEventFlowTest.flowOnlyDrainsItsOwnBackgroundLoopers') > .proof/baseline.log 2>&1
+          code=$?
+          set -e
+          cat .proof/baseline.log
+          test "$code" -eq 1
+          cp apps/android/wear/build/test-results/testDebugUnitTest/TEST-ai.openclaw.wear.WearChatEventFlowTest.xml .proof/baseline.xml
+          grep -F 'another fixture owns this work expected:&lt;1&gt; but was:&lt;0&gt;' .proof/baseline.xml
+          cp .proof/repaired.kt "$p"
+      - name: Verify complete Wear suite and Kotlin style
+        env:
+          JAVA_HOME: ${{ steps.android.outputs.gradle-java-home }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd apps/android && ./gradlew --no-daemon :wear:testDebugUnitTest :wear:ktlintCheck) 2>&1 | tee .proof/repaired.log
+          cp -R apps/android/wear/build/test-results .proof/repaired-results
+          git diff --check
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: agent-zsh-wear-proof
+          path: .proof/
+          include-hidden-files: true
