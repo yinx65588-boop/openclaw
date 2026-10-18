@@ -32,6 +32,15 @@ jobs:
           sw_vers > .proof/platform.txt
           /bin/zsh --version >> .proof/platform.txt
           node scripts/package-openclaw-for-docker.mjs --allow-unreleased-changelog --output-dir "$RUNNER_TEMP/zsh-package" --output-name repaired-openclaw.tgz > .proof/package-build.log 2>&1
+          printf '%s\n' "$REVIEWED_SOURCE" > "$RUNNER_TEMP/zsh-package/reviewed-source.txt"
+          shasum -a 256 "$RUNNER_TEMP/zsh-package/repaired-openclaw.tgz" > .proof/package-sha256.txt
+          cp .proof/package-sha256.txt "$RUNNER_TEMP/zsh-package/"
+      - name: Preserve the verified package for proof fixture follow-ups
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: agent-zsh-reviewed-package
+          path: ${{ runner.temp }}/zsh-package/
+          retention-days: 7
       - name: Execute stable and upgraded public CLI through real zsh
         shell: bash
         run: |

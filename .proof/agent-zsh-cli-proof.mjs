@@ -46,6 +46,7 @@ const server = http.createServer(async (request, response) => {
     const toolResults = body.messages.filter(message => message.role === 'tool');
     results = toolResults.map(message => ({ id: message.tool_call_id, content: message.content }));
     ledger.push({ stage, request: ledger.length + 1, results });
+    await fs.writeFile('.proof/zsh-cli-request-ledger.json', JSON.stringify(ledger, null, 2));
     assert(ledger.filter(row => row.stage === stage).length <= 2, 'unexpected model retries');
     if (!toolResults.length) assert(body.tools.some(tool => tool.function.name === 'exec'), 'built-in exec must be advertised');
     const delta = toolResults.length ? { role: 'assistant', content: 'Both exec results were received.' } : {
@@ -74,12 +75,13 @@ try {
       models: [{ id: 'model', name: 'Synthetic zsh exec proof', reasoning: false, input: ['text'],
         contextWindow: 32000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } },
   }));
-  await run('npm', ['install', '-g', '--prefix', prefix, 'openclaw@2026.10.4', '--no-audit', '--no-fund'], 'stable-install');
+  await run('npm', ['install', '-g', '--prefix', prefix, 'openclaw@2026.10.4', '--allow-scripts=openclaw', '--no-audit', '--no-fund'], 'stable-install');
   const stableVersion = (await run(cli, ['--version'], 'stable-version')).trim();
-  async function execute(label) {
+  const stableSessionId = randomUUID();
+  async function execute(label, sessionId = randomUUID()) {
     stage = label;
     results = [];
-    const stdout = await run(cli, ['agent', '--local', '--agent', 'main', '--session-id', randomUUID(),
+    const stdout = await run(cli, ['agent', '--local', '--agent', 'main', '--session-id', sessionId,
       '--message', 'Run the two specified shell command checks.', '--thinking', 'off', '--timeout', '60', '--json'], label);
     assert.ifError(fixtureError);
     assert.equal(results.length, 2, 'both real exec results must reach the HTTP provider');
@@ -88,24 +90,44 @@ try {
     assert(result.payloads.some(payload => payload.text.includes('Both exec results were received.')));
     return output;
   }
-  const baseline = await execute('stable');
+  const baseline = await execute('stable', stableSessionId);
   assert(baseline[0].includes('not found'), 'stable equals expansion must reproduce');
   assert(baseline[1].includes('no matches found'), 'stable unmatched glob must reproduce');
   assert(baseline.every(text => !text.includes('after')), 'stable command chains must stop early');
   const existingConfig = await fs.readFile(configPath);
   const digest = value => createHash('sha256').update(value).digest('hex');
-  await run('npm', ['install', '-g', '--prefix', prefix, path.resolve(process.argv[2]), '--no-audit', '--no-fund'], 'repair-upgrade');
+  await run('npm', ['install', '-g', '--prefix', prefix, path.resolve(process.argv[2]), '--allow-scripts=openclaw', '--no-audit', '--no-fund'], 'repair-upgrade');
   assert.equal(digest(await fs.readFile(configPath)), digest(existingConfig), 'existing settings must remain byte-identical after package replacement');
   const repairedVersion = (await run(cli, ['--version'], 'repair-version')).trim();
+  // Manual package updates require the documented Doctor migration before use.
+  // Keep the old state and sessions; do not replace them with a fresh profile.
+  await run(cli, ['doctor', '--fix', '--non-interactive', '--no-workspace-suggestions', '--no-color'], 'upgrade-doctor');
+  function assertExistingSettings(actual, expected, settingPath = '') {
+    for (const [key, value] of Object.entries(expected)) {
+      const nextPath = settingPath ? `${settingPath}.${key}` : key;
+      // The config writer owns this version stamp; user settings remain intact.
+      if (nextPath === 'meta.lastTouchedVersion' || nextPath === 'meta.lastTouchedAt') continue;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        assert(actual?.[key] && typeof actual[key] === 'object', `${nextPath} must remain present`);
+        assertExistingSettings(actual[key], value, nextPath);
+      } else assert.deepEqual(actual?.[key], value, `${nextPath} must remain unchanged`);
+    }
+  }
+  const migratedConfig = await fs.readFile(configPath);
+  assertExistingSettings(JSON.parse(migratedConfig), JSON.parse(existingConfig));
+  const sessionsStdout = await run(cli, ['sessions', '--agent', 'main', '--json'], 'upgraded-sessions');
+  const sessions = JSON.parse(sessionsStdout.slice(sessionsStdout.indexOf('{')));
+  assert(sessions.sessions.some(session => session.sessionId === stableSessionId), 'stable session must remain readable after migration');
   const repaired = await execute('repair');
   assert(repaired[0].includes('before\n===\nafter'), 'repaired separator chain must complete through actual exec');
   assert(repaired[1].includes('before\nno-such-file-*.txt\nafter'), 'repaired unmatched-glob chain must complete through actual exec');
   assert(repaired.every(text => !text.includes('not found') && !text.includes('no matches found')));
-  assert.equal(digest(await fs.readFile(configPath)), digest(existingConfig));
+  assert.equal(digest(await fs.readFile(configPath)), digest(migratedConfig), 'exec must not change the migrated config');
   assert.equal(await fs.readFile(path.join(workspace, 'existing-settings-marker.txt'), 'utf8'), 'Existing workspace retained.\n');
   const summary = { platform: os.release(), node: process.version, shell: '/bin/zsh', stableVersion, repairedVersion,
     entry: 'installed openclaw agent --local -> real HTTP adapter -> built-in exec -> native zsh',
-    upgrade: 'manual npm replacement in the same isolated prefix', existingSettingsByteIdentical: true, workspaceMarkerRetained: true,
+    upgrade: 'manual npm replacement in the same isolated prefix, followed by documented doctor --fix migration',
+    packageReplacementConfigByteIdentical: true, existingSettingsPreserved: true, stableSessionRetained: true, workspaceMarkerRetained: true,
     shellSnapshot: 'disabled identically before and after', commands, baseline, repaired, paidProviderCalls: 0 };
   await fs.writeFile('.proof/zsh-cli-summary.json', JSON.stringify(summary, null, 2));
   await fs.writeFile('.proof/zsh-cli-request-ledger.json', JSON.stringify(ledger, null, 2));
