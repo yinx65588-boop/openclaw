@@ -1,0 +1,57 @@
+name: Agent validation warning final type proof
+on:
+  push:
+    branches: [proof/agent-validation-final-176066]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  final:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 924b2e710a0020e9aac5a406c86f853cd320c739
+          persist-credentials: false
+          fetch-depth: 3
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: read-write
+      - name: Validate corrected async fixture and owner types
+        run: |
+          mkdir -p .proof
+          git rev-parse HEAD | tee .proof/source-sha.txt
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          fs.writeFileSync('.proof/tsconfig.validation-tests.json',JSON.stringify({
+            extends:'../test/tsconfig/tsconfig.core.test.shard.json',
+            compilerOptions:{tsBuildInfoFile:'../.artifacts/tsgo-cache/validation-tests.tsbuildinfo'},
+            include:['../test/types/vitest-codex-attempt-runtime.d.ts','../src/**/*.d.ts','../ui/**/*.d.ts','../extensions/**/*.d.ts','../packages/**/*.d.ts','../src/agents/tool-terminal-outcome.test.ts','../src/agents/embedded-agent-runner/run/tool-error-warning.test.ts']
+          }));
+          JS
+          node scripts/run-tsgo.mjs -p .proof/tsconfig.validation-tests.json --incremental > .proof/types-tests.log 2>&1
+      - name: Rerun the changed integration fixture
+        if: ${{ !cancelled() }}
+        run: |
+          /usr/bin/time -v -o .proof/integration-time.log pnpm test src/agents/tool-terminal-outcome.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/integration.json > .proof/integration.log 2>&1
+      - name: Final formatting and owner lint
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 src/agents/tool-terminal-outcome.test.ts src/agents/embedded-agent-runner/run/tool-error-warning.ts src/agents/embedded-agent-runner/run/tool-error-warning.test.ts > .proof/lint.log 2>&1
+          pnpm exec oxfmt --check src/agents/tool-terminal-outcome.test.ts src/agents/embedded-agent-runner/run/tool-error-warning.ts src/agents/embedded-agent-runner/run/tool-error-warning.test.ts > .proof/format.log 2>&1
+          git diff --check 89207ad525fc581f59eaa6ed8c999474cb78b376 HEAD
+          git diff --exit-code 2cb5153431e332c7c381efe4bdf78f2421f78a0c HEAD -- src/agents/embedded-agent-runner/run/tool-error-warning.ts src/agents/embedded-agent-runner/run/tool-error-warning.test.ts
+      - name: Upload final source evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: agent-validation-final-proof
+          path: .proof/
+          include-hidden-files: true
