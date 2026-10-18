@@ -1,0 +1,39 @@
+name: Agent zsh changed-file guards proof
+on:
+  push:
+    branches: [proof/agent-zsh-guards-126521]
+permissions:
+  contents: read
+env:
+  PROOF_BASE: adb12365084a81f7f0bb4604ed8fa04b735071cc
+jobs:
+  guards:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Changed-file guards with available baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin "$PROOF_BASE"
+          git rev-parse HEAD > .proof/source-sha.txt
+          git diff --exit-code 58fe00b00e644958dbb5f87c1febaef707fcfb33 HEAD -- docs/tools/exec.md package.json src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts
+          node --import ./scripts/tsx.mjs scripts/check-line-cap-ratchet.mts --base "$PROOF_BASE" 2>&1 | tee .proof/line-cap.log
+          git diff --check "$PROOF_BASE" HEAD
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: agent-zsh-guards-proof
+          path: .proof/
+          include-hidden-files: true
