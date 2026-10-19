@@ -1,0 +1,76 @@
+name: PR 176119 native and cancellation maintenance validation
+on:
+  push:
+    branches: [proof/zsh-maintenance-176119]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+  REVIEWED_HEAD: 9a074d33df6fee3f25aea712810592bf7b148e34
+jobs:
+  native:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      OPENCLAW_VITEST_RUNTIME: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Verify source and execute native shell regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin "$REVIEWED_HEAD"
+          git diff --exit-code "$REVIEWED_HEAD" HEAD -- . ':!.github/workflows/pr-maintenance-proof.yml'
+          sw_vers > .proof/native-platform.log
+          /bin/zsh --version >> .proof/native-platform.log
+          node scripts/run-vitest.mjs src/agents/shell-utils.test.ts src/agents/shell-snapshot.test.ts src/agents/bash-tools.exec-host-spawn.test.ts src/agents/bash-tools.exec-runtime.test.ts --maxWorkers=1 2>&1 | tee .proof/native-tests.log
+          node scripts/run-format.mts --check src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts package.json docs/tools/exec.md 2>&1 | tee .proof/format.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-maintenance-native
+          path: .proof/
+          include-hidden-files: true
+  cancellation:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+      OPENCLAW_VITEST_MAX_WORKERS: '2'
+      OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Verify upstream cancellation coverage through pinned Bun runner
+        shell: bash
+        env:
+          OPENCLAW_NODE_TEST_GROUPS_JSON: '[{"configs":["test/vitest/vitest.extension-database-workers.config.ts"],"includePatterns":["extensions/crabbox/src/crabbox-worker-provision-cancellation.test.ts","extensions/crabbox/src/crabbox-worker-stop-lifetime.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-allocation.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-cli.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-lifecycle.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-maintenance.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-recovery.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-retirement.test.ts","extensions/crabbox/src/crabbox-worker-warm-image-store.test.ts"],"shard_name":"zsh-maintained-crabbox-coverage"}]'
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin "$REVIEWED_HEAD"
+          git diff --exit-code "$REVIEWED_HEAD" HEAD -- . ':!.github/workflows/pr-maintenance-proof.yml'
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/cancellation-tests.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-maintenance-cancellation
+          path: .proof/
+          include-hidden-files: true
