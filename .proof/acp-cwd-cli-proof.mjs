@@ -81,6 +81,7 @@ async function stop(record) {
     resolve();
   }, 5000); })]);
   clearTimeout(timer);
+  await record.done;
 }
 function acp(record) {
   const pending = new Map();
