@@ -1,0 +1,105 @@
+name: PR 176119 native and cancellation maintenance validation
+on:
+  push:
+    branches: [proof/zsh-ci-owner-repair-176119]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+  REVIEWED_HEAD: ebb1b176890c7df1ba6e0949ec1146f80d8b43f8
+jobs:
+  native:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      OPENCLAW_VITEST_RUNTIME: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Verify source and execute native shell regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin "$REVIEWED_HEAD"
+          git diff --exit-code "$REVIEWED_HEAD" HEAD -- . ':!.github/workflows/pr-maintenance-proof.yml'
+          sw_vers > .proof/native-platform.log
+          /bin/zsh --version >> .proof/native-platform.log
+          node scripts/run-vitest.mjs src/agents/shell-utils.test.ts src/agents/shell-snapshot.test.ts src/agents/bash-tools.exec-host-spawn.test.ts src/agents/bash-tools.exec-runtime.test.ts --maxWorkers=1 2>&1 | tee .proof/native-tests.log
+          node scripts/run-format.mts --check src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts package.json docs/tools/exec.md 2>&1 | tee .proof/format.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-maintenance-native
+          path: .proof/
+          include-hidden-files: true
+  failed_groups:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: memory
+            encoded: H4sIAAAAAAAAA83TsW4CMQwG4HfJjO/GIp6iO0KVSdy7iJxz2A4Hqnj3ShwqHTolS6cow/9Fjn7vv5zP/BkHdbu9M1LrL/HX0dHViDVmhoCGR1SCJcuJRLs12Jm6w8ZF9qkEekczEn5oP1HtJ5qy3MBnoV7FP+/9hIwDCSih+PEJd3pO0ah7PG/qNtVQvdDNWW0Q0hajcPQ5EJwLya0S0vXrKRk2CXT1qTwSTcxcjil6tJi5yVE/Uigp8tDElDmgEQj6V10OG6cjSvhgnMjtnB+RBwrw0mEtLmzf3H3zP/o/YsgL5IVrW7sCi1QvTi7iCSIHusKJhCk17sAfYIOjhrWTGYqVGXzKWi1YUZiFlNg3GQ1j3NhDnrWLbCQXTDWF37r74Rt++nsz8gUAAA==
+          - group: provider
+            encoded: H4sIAAAAAAAAA5WW3XLiMAyF3yXcIkLbbaF9ir3vdDqKLRJP/TeyEkp39t13IDQwbAPOlXPxHdk6kuW8/ilU8BtTp+LltRBKUnbmbFnQp5BPJniIHDqjidOiVywkFW/zwnhlW02/UYTYH8IMmlSiw6/goSLNQX2AQy+WSm2SCh3xbnHYQ1Ixvy0yXtPnFEG/AHppOESjFtx6MY5yYpS4TaCYNHkxaIFpw5SaLKkKXjhYiBZ93maqTRLc4DBwaMX4Oks7yct8E0uLXzswLgaWLJ6pNkmIF2nnp1mdhAndIEGlwv7T18AULeYldhHkZ8l3J0BHLPRZYjSZ5DXfLtnjGUChoA1jVbxU9QlAXgKlsgawlQbSPusM2JmaUUzwOXDkoCilHHTCeVODTDqHFEafDp2nbEhZwTvilJHdJvAWWYMKLqJATZ7ybMlpgIw7c0JNRzDc3UMtb0lc0GQhslHjs2GAT7PkWKDDVEJ182CJ0mHcH7v37IxVq2uarBcmgi2KupnfhTIXb+Px6qAS0xkZmxcnYY9vGWPcP2c/4zFago27WvhvxqOYbqRNq51QtG26Fmhg7O0w+6qGs8YdXo2fdapphVJpXLRGGcmjD502YswRCeMdq4Lb7Mr+J6E9HrK/b9d447CmCXn1onFPe8C1yaipUSdarIliIrr6uA5M8FVAHpmCA7Wlaj/ZWTX/7/02L/aTVL97dFS8FKpBX5OGUxzovYdVMS/EOOPr9w/anaFXJLNElpQEhtUS8Lla/nquqrvH6mF25odarZcPT3i/ppWeRWSBOwgbuJ8dfwbhcQlr/YSPK1U90cO6+Pv2D/Q6zN5pCgAA
+    env:
+      OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+      OPENCLAW_VITEST_MAX_WORKERS: '2'
+      OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+      OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: ${{ matrix.encoded }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Validate the exact previously failing group in original order
+        run: |
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/source-sha.txt
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/group.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-current-${{ matrix.group }}
+          path: .proof/
+          include-hidden-files: true
+  classification:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Read canonical CI failure classification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .proof
+          pnpm test:ci-failed https://github.com/openclaw/openclaw/actions/runs/39200242910 --repo openclaw/openclaw --json > .proof/classification.json 2> .proof/classification.stderr
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-current-classification
+          path: .proof/
+          include-hidden-files: true
