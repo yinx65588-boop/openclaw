@@ -1,0 +1,185 @@
+name: Autonomous session idle baseline Gateway reproduction
+on:
+  push:
+    branches: [proof/session-idle-baseline-v3-177065]
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Reproduce through the built public Gateway and authenticated WebSocket
+        run: |
+          mkdir -p .proof
+          git rev-parse HEAD | tee .proof/source-sha.txt
+          cat > .proof/session-idle-cli.mjs <<'JS'
+          import assert from 'node:assert/strict';
+          import { spawn } from 'node:child_process';
+          import { randomUUID } from 'node:crypto';
+          import fs from 'node:fs/promises';
+          import http from 'node:http';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { setTimeout as delay } from 'node:timers/promises';
+          
+          const root = await fs.mkdtemp(path.join(os.tmpdir(), 'openclaw-idle-proof-'));
+          const proofDir = path.resolve('.proof/session-idle');
+          await fs.mkdir(proofDir, { recursive: true });
+          Object.assign(process.env, { OPENCLAW_STATE_DIR: path.join(root, 'state'), OPENCLAW_CONFIG_PATH: path.join(root, 'openclaw.json'), OPENCLAW_HOME: path.join(root, 'home'), OPENCLAW_HIDE_BANNER: '1' });
+          const { acquireTestPortBlock } = await import('../src/test-utils/port-claims.ts');
+          const { GatewayClient } = await import('../src/gateway/client.ts');
+          const { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_CAPS } = await import('../packages/gateway-protocol/src/client-info.ts');
+          const claim = await acquireTestPortBlock({ offsets: [0] });
+          const token = 'synthetic-idle-proof-token';
+          const gatewayUrl = `ws://127.0.0.1:${claim.port}`;
+          const workspace = path.join(root, 'workspace');
+          await fs.mkdir(workspace, { recursive: true });
+          const holdScript = path.join(workspace, 'background-hold.mjs');
+          const key = 'agent:main:session-idle-proof';
+          const events = [];
+          const ledger = [];
+          let heldResponse;
+          let fixtureError;
+          let gateway;
+          let client;
+          let stdout = '', stderr = '';
+          let gatewayClosed = false;
+          const waitFor = async (read, label, timeoutMs = 60000) => {
+            const deadline = Date.now() + timeoutMs;
+            for (;;) {
+              assert.ifError(fixtureError);
+              assert(!gatewayClosed, `Gateway exited while waiting for ${label}: ${stderr.slice(-3000)}`);
+              const result = await read();
+              if (result) return result;
+              assert(Date.now() < deadline, `Timed out waiting for ${label}`);
+              await delay(50);
+            }
+          };
+          const server = http.createServer(async (request, response) => {
+            try {
+              if (request.method === 'GET' && request.url === '/hold-exec') {
+                assert(!heldResponse, 'only one background process expected');
+                heldResponse = response;
+                return;
+              }
+              assert.equal(request.method, 'POST');
+              assert.equal(request.url, '/v1/chat/completions');
+              let raw = '';
+              for await (const chunk of request) raw += chunk;
+              const body = JSON.parse(raw);
+              const number = ledger.length + 1;
+              assert(number <= 6, 'unexpected inference loop');
+              ledger.push({ number, toolResults: body.messages.filter(m => m.role === 'tool').map(m => String(m.content).slice(0, 350)) });
+              const command = `node '${holdScript}'`;
+              const delta = number === 2
+                ? { role: 'assistant', tool_calls: [{ index: 0, id: 'idle_exec', type: 'function', function: { name: 'exec', arguments: JSON.stringify({ command, background: true }) } }] }
+                : { role: 'assistant', content: number === 1 ? 'CONTROL_TURN_DONE' : number === 3 ? 'INITIAL_TURN_DONE' : 'BACKGROUND_NOTICE_DONE' };
+              if (number === 2) assert(body.tools.some(t => t.function.name === 'exec'), 'real exec must be available');
+              response.writeHead(200, { 'content-type': 'text/event-stream' });
+              response.end(`data: ${JSON.stringify({ id: `idle-proof-${number}`, object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: number === 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } })}\n\ndata: [DONE]\n\n`);
+            } catch (error) {
+              fixtureError = error;
+              response.writeHead(500);
+              response.end('Synthetic fixture failed');
+            }
+          });
+          await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+          try {
+            await fs.writeFile(holdScript, `const response = await fetch('http://127.0.0.1:${server.address().port}/hold-exec'); console.log(await response.text());\n`);
+            await fs.writeFile(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+              gateway: { mode: 'local', auth: { mode: 'token', token } }, cron: { enabled: true },
+              plugins: { enabled: false }, env: { shellEnv: { enabled: false } },
+              tools: { allow: ['exec'], deny: ['process'], codeMode: { enabled: false }, exec: { host: 'gateway', mode: 'full', notifyOnExit: true } },
+              agents: { entries: { main: {} }, defaults: { workspace, systemAgent: { agentId: 'main' }, model: { primary: 'proof-idle/model' }, models: { 'proof-idle/model': { agentRuntime: { id: 'openclaw' } } } } },
+              models: { providers: { 'proof-idle': { api: 'openai-completions', apiKey: 'synthetic-unused-key', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, request: { allowPrivateNetwork: true }, models: [{ id: 'model', name: 'Synthetic idle proof', reasoning: false, input: ['text'], contextWindow: 32000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } },
+            }));
+            gateway = spawn('pnpm', ['--silent', 'openclaw', 'gateway', 'run', '--port', String(claim.port), '--bind', 'loopback'], { env: process.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+            gateway.stdout.on('data', chunk => stdout += chunk);
+            gateway.stderr.on('data', chunk => stderr += chunk);
+            gateway.done = new Promise((resolve, reject) => { gateway.on('error', reject); gateway.on('close', code => { gatewayClosed = true; resolve(code); }); });
+            await waitFor(async () => { try { return (await fetch(`http://127.0.0.1:${claim.port}/healthz`)).ok; } catch { return false; } }, 'healthy isolated Gateway', 240000);
+            let readyResolve, readyReject;
+            const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+            client = new GatewayClient({ url: gatewayUrl, token, clientName: GATEWAY_CLIENT_IDS.CLI, mode: GATEWAY_CLIENT_MODES.CLI, caps: [GATEWAY_CLIENT_CAPS.SESSION_SCOPED_EVENTS], role: 'operator', scopes: ['operator.admin'], onHelloOk: readyResolve, onConnectError: readyReject, onEvent: event => {
+              const p = event.payload ?? {};
+              if (['sessions.changed', 'agent', 'chat'].includes(event.event)) events.push({ event: event.event, at: Date.now(), sessionKey: p.sessionKey, runId: p.runId, phase: p.data?.phase ?? p.phase, state: p.state, reason: p.reason, hasActiveRun: p.hasActiveRun ?? p.session?.hasActiveRun });
+            } });
+            client.start();
+            await ready;
+            await client.request('sessions.create', { key, label: 'Idle publication fixture' });
+            await client.request('sessions.subscribe', {});
+            const warmup = await client.request('chat.send', { sessionKey: key, message: 'Reply briefly without tools.', idempotencyKey: randomUUID(), thinking: 'off' });
+            await fs.writeFile(path.join(proofDir, 'control-run.json'), JSON.stringify(warmup));
+            await waitFor(() => ledger.length >= 1 && events.some(e => e.event === 'sessions.changed' && e.sessionKey === key && e.hasActiveRun === false), 'independent plain RPC turn idle push control');
+            const sent = await client.request('chat.send', { sessionKey: key, message: 'Start the requested command in the background, then reply briefly.', idempotencyKey: randomUUID(), thinking: 'off' });
+            await fs.writeFile(path.join(proofDir, 'background-parent-run.json'), JSON.stringify(sent));
+            assert.equal(typeof sent.runId, 'string');
+            await waitFor(() => heldResponse && ledger.length >= 3, 'background exec returned to the model before release');
+            const releasedAt = Date.now();
+            heldResponse.writeHead(200, { 'content-type': 'text/plain' });
+            heldResponse.end('BACKGROUND_COMMAND_FINISHED');
+            const terminal = await waitFor(() => ledger.length >= 4 && events.find(e => e.at >= releasedAt && e.event === 'agent' && e.sessionKey === key && e.runId !== sent.runId && e.runId !== warmup.runId && e.phase === 'end'), 'autonomous exec-completion run terminal', 90000);
+            assert(ledger.length >= 4, 'completion must actually invoke the agent');
+            const idleRow = await waitFor(async () => {
+              const listing = await client.request('sessions.list', {});
+              const row = listing.sessions.find(s => s.key === key);
+              return row && row.hasActiveRun === false ? row : false;
+            }, 'authoritative idle row');
+            const idleObservedAt = Date.now();
+            // This observes absence beyond the existing 500 ms event coalescing bound.
+            await delay(1500);
+            const followupChanges = events.filter(e => e.event === 'sessions.changed' && e.sessionKey === key && e.at >= releasedAt);
+            const idlePush = followupChanges.some(e => e.at >= terminal.at && e.hasActiveRun === false);
+            const baseline = process.argv[2] === 'baseline';
+            assert.equal(idlePush, !baseline, 'autonomous turn must publish its settled idle state');
+            const summary = { baseline, modelEndpointOnlySynthetic: true, paidProviderCalls: 0, modelRequests: ledger.length, initialRpcIdleControl: true, backgroundRunId: terminal.runId, authoritativeRowIdle: idleRow.hasActiveRun === false, autonomousIdlePush: idlePush, observationAfterRowIdleMs: Date.now() - idleObservedAt, lastPush: followupChanges.at(-1) };
+            await fs.writeFile(path.join(proofDir, 'summary.json'), JSON.stringify(summary, null, 2));
+            console.log(JSON.stringify(summary));
+          } finally {
+            client?.stop();
+            server.closeAllConnections();
+            if (gateway && !gatewayClosed) {
+              try { process.kill(-gateway.pid, 'SIGTERM'); } catch {}
+              await Promise.race([gateway.done, delay(5000)]);
+              if (!gatewayClosed) { try { process.kill(-gateway.pid, 'SIGKILL'); } catch {} }
+              await gateway.done;
+            }
+            await fs.writeFile(path.join(proofDir, 'gateway.stdout.log'), stdout);
+            await fs.writeFile(path.join(proofDir, 'gateway.stderr.log'), stderr);
+            await fs.writeFile(path.join(proofDir, 'events.json'), JSON.stringify(events, null, 2));
+            await fs.writeFile(path.join(proofDir, 'request-ledger.json'), JSON.stringify(ledger, null, 2));
+            await new Promise(resolve => server.close(resolve));
+            await claim.release();
+          }
+          
+          JS
+          node --import ./scripts/tsx.mjs .proof/session-idle-cli.mjs baseline | tee .proof/terminal-summary.log
+          test -s .proof/session-idle/summary.json
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const r=JSON.parse(fs.readFileSync('.proof/session-idle/summary.json','utf8'));
+          assert.equal(r.initialRpcIdleControl,true);
+          assert.equal(r.authoritativeRowIdle,true);
+          assert.equal(r.autonomousIdlePush,false);
+          assert.ok(r.modelRequests>=4);
+          JS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: session-idle-baseline-proof
+          path: .proof/
+          include-hidden-files: true
