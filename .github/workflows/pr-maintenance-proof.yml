@@ -1,0 +1,44 @@
+name: Historical transcript warning formatting and types
+on:
+  push:
+    branches: [proof/transcript-warning-format-176966]
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  static:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: bad847399ccf60b1ee565bc27c15979959e007c9
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Format the two source files and preserve the exact patch
+        run: |
+          mkdir -p .proof/formatted
+          pnpm exec oxfmt src/commands/doctor-session-sqlite-warnings.ts src/commands/doctor-session-sqlite-warnings.test.ts
+          git diff -- src/commands/doctor-session-sqlite-warnings.ts src/commands/doctor-session-sqlite-warnings.test.ts > .proof/format.patch
+          cp src/commands/doctor-session-sqlite-warnings.ts src/commands/doctor-session-sqlite-warnings.test.ts .proof/formatted/
+          git diff --check
+      - name: Validate formatted owner types
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          fs.writeFileSync('.proof/tsconfig.warning-tests.json',JSON.stringify({extends:'../test/tsconfig/tsconfig.core.test.shard.json',compilerOptions:{tsBuildInfoFile:'../.artifacts/tsgo-cache/warning-tests.tsbuildinfo'},include:['../test/types/vitest-codex-attempt-runtime.d.ts','../src/**/*.d.ts','../ui/**/*.d.ts','../extensions/**/*.d.ts','../packages/**/*.d.ts','../src/commands/doctor-session-sqlite-warnings.test.ts']}));
+          JS
+          node scripts/run-tsgo.mjs -p .proof/tsconfig.warning-tests.json --incremental > .proof/types.log 2>&1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: transcript-warning-format-and-types
+          path: .proof/
+          include-hidden-files: true
