@@ -1,17 +1,17 @@
-name: ACP inherited mock export guard comparison
+name: ACP refreshed head public CLI proof
 on:
   push:
     branches: [proof/acp-session-cwd-123557]
 permissions:
   contents: read
 env:
-  CI_BASE: d5aeceb2b89e253ba15d41976d0618e31842fb48
-  CI_TARGET: c5d6eefd1b03800e8709f7c037087f7f59ddc8f7
+  NODE_OPTIONS: --max-old-space-size=6144
+  REVIEWED_HEAD: 9ddbdddef829d4bbab201bb3ce92af897afd5279
 jobs:
-  compare:
+  cli:
     if: github.repository == 'yinx65588-boop/openclaw'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -21,29 +21,19 @@ jobs:
           node-version: '24.21.0'
           install-bun: 'false'
           cache-mode: restore
-      - name: Compare the exact failed guard on base and CI merge
+      - name: Verify exact PR source and exercise built public ACP
         shell: bash
         run: |
           set -euo pipefail
-          evidence="$RUNNER_TEMP/acp-mock-export-comparison"
-          mkdir -p "$evidence"
-          git fetch --no-tags --depth=1 origin "$CI_BASE" "$CI_TARGET"
-          git diff --exit-code "$CI_BASE" "$CI_TARGET" -- test/scripts/ci-node-test-plan.test.ts scripts/check-test-mock-exports.mts config/test-mock-exports-baseline.txt
-          for variant in base merge; do
-            if [ "$variant" = base ]; then target="$CI_BASE"; else target="$CI_TARGET"; fi
-            git checkout --detach "$target"
-            set +e
-            node --import ./scripts/tsx.mjs scripts/check-test-mock-exports.mts --base "$CI_BASE" --no-merge-base > "$evidence/$variant.log" 2>&1
-            result=$?
-            set -e
-            printf '%s\n' "$result" > "$evidence/$variant.exit-code"
-            cat "$evidence/$variant.log"
-            test "$result" -eq 1
-          done
-          diff -u "$evidence/base.log" "$evidence/merge.log"
-          printf 'Exact base %s and CI merge %s fail identically.\n' "$CI_BASE" "$CI_TARGET" | tee "$evidence/result.txt"
+          git fetch --no-tags --depth=1 origin "$REVIEWED_HEAD"
+          git diff --exit-code "$REVIEWED_HEAD" HEAD -- . ':!.github/workflows/acp-cwd-proof.yml' ':!.proof/acp-cwd-cli-proof.mjs'
+          mkdir -p .proof
+          git rev-parse "$REVIEWED_HEAD" > .proof/reviewed-head.txt
+          pnpm build:ci-artifacts > .proof/build-refreshed-head.log 2>&1
+          node --import ./scripts/tsx.mjs .proof/acp-cwd-cli-proof.mjs | tee .proof/cli-refreshed-head.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: acp-inherited-mock-export-comparison
-          path: ${{ runner.temp }}/acp-mock-export-comparison/
+          name: acp-cwd-refreshed-head-public-cli
+          path: .proof/
+          include-hidden-files: true
