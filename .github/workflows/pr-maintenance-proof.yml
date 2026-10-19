@@ -1,0 +1,134 @@
+name: Google Chat maintained approval regressions
+on:
+  push:
+    branches: [proof/googlechat-maintenance-174473]
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+  PROOF_BASE: 5b935f3f77d587b6a70a7177627e953589d12699
+  REVIEWED_HEAD: e6847dee9e18a75c97b76c15bc57bb0cfb85a798
+jobs:
+  regressions:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Reproduce on baseline with identical tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin "$PROOF_BASE" "$REVIEWED_HEAD"
+          git diff --exit-code "$REVIEWED_HEAD" HEAD -- . ':!.github/workflows/pr-maintenance-proof.yml'
+          printf '%s\n' "$GITHUB_SHA" > .proof/source-sha.txt
+          git restore --source="$PROOF_BASE" --worktree -- src/channels/plugins/exec-approval-local.ts src/plugin-sdk/approval-native-helpers.ts extensions/googlechat/src/approval-card-actions.ts
+          set +e
+          pnpm test src/plugin-sdk/approval-native-helpers.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline-sdk.json > .proof/baseline-sdk.log 2>&1
+          echo "$?" > .proof/baseline-sdk.status
+          pnpm test extensions/googlechat/src/approval-card-actions.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline-actions.json > .proof/baseline-actions.log 2>&1
+          echo "$?" > .proof/baseline-actions.status
+          pnpm test extensions/googlechat/src/approval-handler.runtime.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline-runtime.json > .proof/baseline-runtime.log 2>&1
+          echo "$?" > .proof/baseline-runtime.status
+          pnpm test src/auto-reply/reply/dispatch-from-config.lifecycle.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/baseline-dispatch.json > .proof/baseline-dispatch.log 2>&1
+          echo "$?" > .proof/baseline-dispatch.status
+          git restore --source=HEAD --worktree -- src/channels/plugins/exec-approval-local.ts src/plugin-sdk/approval-native-helpers.ts extensions/googlechat/src/approval-card-actions.ts
+          set -e
+          node --input-type=module <<'JS' | tee .proof/baseline-summary.log
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const expected = {
+            sdk: 'uses the plugin forwarding config',
+            actions: 'suppresses plugin approval follow-ups only',
+            runtime: 'suppresses manual approval follow-ups during and after native card delivery (1)',
+            dispatch: 'suppresses with an active plugin route for Google Chat plugin approval prompts',
+          };
+          for (const [name, expectedName] of Object.entries(expected)) {
+            const report = JSON.parse(fs.readFileSync(`.proof/baseline-${name}.json`, 'utf8'));
+            const failed = report.testResults.flatMap(s => s.assertionResults ?? []).filter(a => a.status === 'failed');
+            console.log(`${name}: ${report.numFailedTests} failed, ${report.numPassedTests} passed`);
+            console.log(failed.map(a => a.fullName).join('\n'));
+            assert.equal(fs.readFileSync(`.proof/baseline-${name}.status`, 'utf8').trim(), '1');
+            assert.equal(report.numFailedTests, 1);
+            assert.equal(report.numRuntimeErrorTestSuites ?? 0, 0);
+            assert.equal(failed.length, 1);
+            assert.ok(failed[0].fullName.includes(expectedName));
+          }
+          JS
+      - name: Repaired SDK and real dispatch regressions
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm test src/plugin-sdk/approval-native-helpers.test.ts src/auto-reply/reply/dispatch-from-config.lifecycle.test.ts --maxWorkers=1 > .proof/repaired-core.log 2>&1
+          cat .proof/repaired-core.log
+      - name: Google Chat plugin lane
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm test:extension googlechat --maxWorkers=1 > .proof/repaired-googlechat.log 2>&1
+          cat .proof/repaired-googlechat.log
+      - name: Shared helper channel consumers
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm test extensions/signal/src/approval-native.test.ts extensions/imessage/src/approval-native.test.ts extensions/msteams/src/approval-native.test.ts --maxWorkers=1 > .proof/consumers.log 2>&1
+          cat .proof/consumers.log
+      - name: Upload regression evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: googlechat-regression-proof
+          path: .proof/
+          include-hidden-files: true
+  static:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Verify maintained source
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin "$PROOF_BASE" "$REVIEWED_HEAD"
+          git diff --exit-code "$REVIEWED_HEAD" HEAD -- . ':!.github/workflows/pr-maintenance-proof.yml'
+      - name: Exact changed extension test types
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          fs.writeFileSync('.proof/tsconfig.googlechat-tests.json',JSON.stringify({
+            extends:'../test/tsconfig/tsconfig.extensions.test.json',
+            compilerOptions:{tsBuildInfoFile:'../.artifacts/tsgo-cache/googlechat-tests.tsbuildinfo'},
+            include:['../test/types/vitest-codex-attempt-runtime.d.ts','../src/**/*.d.ts','../ui/**/*.d.ts','../extensions/**/*.d.ts','../packages/**/*.d.ts','../extensions/googlechat/src/approval-card-actions.test.ts','../extensions/googlechat/src/approval-handler.runtime.test.ts']
+          }));
+          JS
+          node scripts/run-tsgo.mjs -p .proof/tsconfig.googlechat-tests.json --incremental > .proof/types-extension-tests.log 2>&1
+      - name: Changed owner lint and formatting
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/run-oxlint.mjs --tsconfig extensions/tsconfig.json --threads=1 extensions/googlechat/src/approval-handler.runtime.test.ts > .proof/fixture-lint.log 2>&1
+          node scripts/run-format.mts --check extensions/googlechat/src/approval-card-actions.ts extensions/googlechat/src/approval-card-actions.test.ts extensions/googlechat/src/approval-handler.runtime.test.ts src/channels/plugins/exec-approval-local.ts src/plugin-sdk/approval-native-helpers.ts src/plugin-sdk/approval-native-helpers.test.ts src/auto-reply/reply/dispatch-from-config.lifecycle.test.ts > .proof/format.log 2>&1
+          git diff --check "$PROOF_BASE" "$REVIEWED_HEAD"
+      - name: Upload static evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: googlechat-maintenance-static
+          path: .proof/
+          include-hidden-files: true
