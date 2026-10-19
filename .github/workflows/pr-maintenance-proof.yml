@@ -1,0 +1,58 @@
+name: PR 176119 Telegram CI failure comparison
+on:
+  push:
+    branches: [proof/zsh-maintenance-telegram-comparison-176119]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  CI_BASE: 6d703b48e8f9b6ff4afba9ef1c95dad611cf56b9
+  CI_MERGE: 0580691fba2e7d4848d3053eb47b3d28851ffe60
+  OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+  OPENCLAW_VITEST_MAX_WORKERS: '2'
+  OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+jobs:
+  comparison:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Compare original Telegram group on exact CI base and merge
+        shell: bash
+        env:
+          OPENCLAW_E2E_USE_PREBUILT_DIST: '1'
+          OPENCLAW_NODE_TEST_TARGETS_JSON: '["test/e2e/qa-lab/runtime/telegram-command-menu-gateway.e2e.test.ts","test/e2e/qa-lab/runtime/telegram-emoji-list-gateway.e2e.test.ts","test/e2e/qa-lab/runtime/telegram-inherited-policy-gateway.e2e.test.ts","test/e2e/qa-lab/runtime/telegram-join-intro-gateway.e2e.test.ts"]'
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/zsh-telegram-comparison"
+          mkdir -p "$evidence"
+          git fetch --no-tags --depth=1 origin "$CI_BASE" "$CI_MERGE"
+          git diff --exit-code "$CI_BASE" "$CI_MERGE" -- test/e2e/qa-lab/runtime extensions/telegram extensions/qa-lab pnpm-lock.yaml
+          for variant in base merge; do
+            if [ "$variant" = base ]; then target="$CI_BASE"; else target="$CI_MERGE"; fi
+            git checkout --detach "$target"
+            printf '%s\n' "$target" > "$evidence/$variant.source"
+            pnpm build:ci-artifacts > "$evidence/$variant.build.log" 2>&1
+            set +e
+            node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts > "$evidence/$variant.log" 2>&1
+            result=$?
+            set -e
+            printf '%s\n' "$result" > "$evidence/$variant.exit-code"
+            cat "$evidence/$variant.log"
+            echo "Captured $variant original exit code: $result"
+            test "$result" -eq 0 || test "$result" -eq 1
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-telegram-ci-comparison
+          path: ${{ runner.temp }}/zsh-telegram-comparison/
