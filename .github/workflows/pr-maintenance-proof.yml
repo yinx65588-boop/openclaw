@@ -1,0 +1,106 @@
+name: Historical transcript warning CI repair proof
+on:
+  push:
+    branches: [proof/transcript-warning-repair-177040]
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  repair:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: 120224a87bff6e9925edfcb18db0f1067541c211
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Classify the original upstream CI failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .proof
+          pnpm test:ci-failed https://github.com/openclaw/openclaw/actions/runs/39211215959 --repo openclaw/openclaw --json > .proof/upstream-ci-classification.json 2> .proof/upstream-ci-classification.stderr
+      - name: Validate the error classification repair and exact source
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin f551cc9371bcd24d6b942a92e81f80ee6a1eeff5
+          pnpm test src/commands/doctor-session-sqlite-warnings.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/owner-tests.json > .proof/owner-tests.log 2>&1
+          pnpm check:assertion-safety --base f551cc9371bcd24d6b942a92e81f80ee6a1eeff5 --no-merge-base > .proof/assertion-safety.log 2>&1
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 src/commands/doctor-session-sqlite-warnings.ts src/commands/doctor-session-sqlite-warnings.test.ts > .proof/lint.log 2>&1
+          pnpm exec oxfmt --check src/commands/doctor-session-sqlite-warnings.ts src/commands/doctor-session-sqlite-warnings.test.ts > .proof/format.log 2>&1
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          fs.writeFileSync('.proof/tsconfig.warning-tests.json',JSON.stringify({extends:'../test/tsconfig/tsconfig.core.test.shard.json',compilerOptions:{tsBuildInfoFile:'../.artifacts/tsgo-cache/warning-tests.tsbuildinfo'},include:['../test/types/vitest-codex-attempt-runtime.d.ts','../src/**/*.d.ts','../ui/**/*.d.ts','../extensions/**/*.d.ts','../packages/**/*.d.ts','../src/commands/doctor-session-sqlite-warnings.test.ts']}));
+          JS
+          node scripts/run-tsgo.mjs -p .proof/tsconfig.warning-tests.json --incremental > .proof/types.log 2>&1
+          git diff --check
+      - name: Recheck the public status command on the repaired head
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p .proof
+          git rev-parse HEAD | tee .proof/source-sha.txt
+          cat > .proof/transcript-warning-cli.mjs <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { createHash } from 'node:crypto';
+          import { spawnSync } from 'node:child_process';
+          
+          const root = fs.mkdtempSync(path.join(os.tmpdir(), 'transcript-warning-proof-'));
+          const stateDir = path.join(root, 'state');
+          const configPath = path.join(root, 'openclaw.json');
+          Object.assign(process.env, { OPENCLAW_STATE_DIR: stateDir, OPENCLAW_CONFIG_PATH: configPath, OPENCLAW_HOME: path.join(root, 'home') });
+          fs.mkdirSync(stateDir, { recursive: true });
+          fs.writeFileSync(configPath, '{}\n');
+          const { openOpenClawAgentDatabase, closeOpenClawAgentDatabasesAsync } = await import('../src/state/openclaw-agent-db.ts');
+          const sqlitePath = path.join(stateDir, 'agents/main/agent.sqlite');
+          openOpenClawAgentDatabase({ agentId: 'main', path: sqlitePath, env: process.env });
+          await closeOpenClawAgentDatabasesAsync();
+          const sessionsDir = path.join(stateDir, 'agents/main/sessions');
+          fs.mkdirSync(sessionsDir, { recursive: true });
+          const presentPath = path.join(sessionsDir, 'still-present.jsonl');
+          fs.writeFileSync(presentPath, '{"type":"session","id":"still-present"}\n');
+          const issue = (file) => ({ code: 'active_sqlite_transcript_jsonl', message: `SQLite-backed session has a legacy JSONL transcript awaiting verification: ${file}. Run openclaw doctor --fix or openclaw doctor --session-sqlite recover with the Gateway stopped to verify, import any missing events, and archive the original.`, sessionKey: 'agent:main:proof' });
+          const manifest = {
+            manifestVersion: 4, runId: 'isolated-proof', openClawVersion: '2026.10.3',
+            startedAt: '2026-10-15T00:00:00Z', completedAt: '2026-10-15T00:00:01Z', failedAt: '2026-10-15T00:00:01Z',
+            targets: [{ agentId: 'main', sqlitePath, storePath: path.join(sessionsDir, 'sessions.json'), plannedMoves: [], completedMoves: [], validationBeforeArchive: 'passed', issues: [issue(path.join(sessionsDir, 'already-archived.jsonl')), issue(presentPath), { code: 'active_sqlite_transcript_jsonl', message: 'Older unresolvable warning wording' }, { code: 'transcript_missing', message: 'Unrelated historical warning' }] },
+              { agentId: 'missing', sqlitePath: path.join(stateDir, 'agents/missing/agent.sqlite'), storePath: path.join(stateDir, 'agents/missing/sessions/sessions.json'), plannedMoves: [], completedMoves: [], validationBeforeArchive: 'passed', issues: [issue(path.join(stateDir, 'agents/missing/sessions/unverified.jsonl'))] }],
+          };
+          const manifestsDir = path.join(stateDir, 'session-sqlite-migration-runs');
+          fs.mkdirSync(manifestsDir, { recursive: true });
+          const manifestPath = path.join(manifestsDir, 'session-sqlite-isolated-proof.json');
+          fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+          const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const protectedFiles = [sqlitePath, manifestPath, presentPath];
+          const before = protectedFiles.map(hash);
+          const cli = spawnSync('pnpm', ['--silent', 'openclaw', 'update', 'status', '--json'], { env: process.env, encoding: 'utf8', timeout: 600000, maxBuffer: 10 * 1024 * 1024 });
+          fs.writeFileSync('.proof/cli-stderr.log', cli.stderr ?? '');
+          assert.equal(cli.status, 0, cli.error?.message ?? cli.stderr);
+          const result = JSON.parse(cli.stdout.slice(cli.stdout.indexOf('{')));
+          const warnings = result.migrationWarnings ?? [];
+          const stale = warnings.some(w => w.includes('already-archived.jsonl'));
+          assert.equal(stale, process.argv[2] === 'baseline', 'historical active-file warning');
+          for (const marker of ['still-present.jsonl', 'Older unresolvable warning wording', 'Unrelated historical warning', 'unverified.jsonl']) assert.ok(warnings.some(w => w.includes(marker)), marker);
+          assert.deepEqual(protectedFiles.map(hash), before, 'database, manifest and original file bytes');
+          assert.equal(fs.existsSync(manifest.targets[1].sqlitePath), false, 'missing store must not be created');
+          console.log(JSON.stringify({ mode: process.argv[2], historicalWarningVisible: stale, retainedControls: 4, protectedFileHashesUnchanged: true, missingStoreCreated: false }));
+          
+          JS
+          node --import ./scripts/tsx.mjs .proof/transcript-warning-cli.mjs repaired | tee .proof/terminal-summary.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: transcript-warning-repair-proof
+          path: .proof/
+          include-hidden-files: true
