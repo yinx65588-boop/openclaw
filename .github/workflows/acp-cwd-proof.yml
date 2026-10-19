@@ -1,0 +1,41 @@
+name: ACP session directory regression proof
+on:
+  push:
+    branches: [proof/acp-session-cwd-123557]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  boundary:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Run the unchanged-source boundary regression
+        shell: bash
+        run: |
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/proof-source.txt
+          set +e
+          node scripts/run-vitest.mjs src/gateway/server.acp-session-cwd.test.ts --maxWorkers=1 > .proof/baseline.log 2>&1
+          result=$?
+          set -e
+          printf '%s\n' "$result" > .proof/baseline-exit.txt
+          cat .proof/baseline.log
+          test "$result" -ne 0
+          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; const log = fs.readFileSync(".proof/baseline.log", "utf8"); assert(log.includes("expected undefined to be")); assert(log.includes("requested")); assert(/1 failed.*1 passed/.test(log));'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: acp-cwd-boundary-proof
+          path: .proof/
+          include-hidden-files: true
