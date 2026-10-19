@@ -20,19 +20,22 @@ jobs:
           node-version: '24.21.0'
           install-bun: 'false'
           cache-mode: restore
-      - name: Run the unchanged-source boundary regression
+      - name: Run repaired boundary and existing ACP/workspace contracts
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p .proof
           git rev-parse HEAD > .proof/proof-source.txt
-          set +e
-          node scripts/run-vitest.mjs src/gateway/server.acp-session-cwd.test.ts --maxWorkers=1 > .proof/baseline.log 2>&1
-          result=$?
-          set -e
-          printf '%s\n' "$result" > .proof/baseline-exit.txt
-          cat .proof/baseline.log
-          test "$result" -ne 0
-          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; const log = fs.readFileSync(".proof/baseline.log", "utf8"); assert(log.includes("expected undefined to be")); assert(log.includes("requested")); assert(/1 failed.*1 passed/.test(log));'
+          node scripts/run-vitest.mjs src/gateway/server.acp-session-cwd.test.ts src/acp/translator.session-setup.test.ts src/gateway/server.sessions.create.workspace-policy.test.ts --maxWorkers=1 2>&1 | tee .proof/repaired-tests.log
+      - name: Check changed owners and type graphs
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/run-format.mts --check src/acp/translator.session-lifecycle.ts src/gateway/server.acp-session-cwd.test.ts docs/cli/acp.md 2>&1 | tee .proof/format.log
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.core.json src/acp/translator.session-lifecycle.ts 2>&1 | tee .proof/lint-source.log
+          node scripts/run-oxlint.mjs --tsconfig test/tsconfig/tsconfig.core.test.gateway-server.json src/gateway/server.acp-session-cwd.test.ts 2>&1 | tee .proof/lint-test.log
+          node scripts/run-tsgo.mjs -p tsconfig.core.json 2>&1 | tee .proof/types-production.log
+          node scripts/run-tsgo.mjs -p test/tsconfig/tsconfig.core.test.gateway-server.json 2>&1 | tee .proof/types-tests.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:

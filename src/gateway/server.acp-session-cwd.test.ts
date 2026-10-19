@@ -17,9 +17,10 @@ import { rpcReq, testState } from "./test-helpers.js";
 const { createSessionStoreDir, openClient } = setupSessionCreateTestHarness();
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-test.each([false, true])(
-  "ACP session/new keeps the Gateway-owned directory (adopt existing: %s)",
-  async (adoptExisting) => {
+test.each(["fresh", "fresh-reset", "adopt"])(
+  "ACP session/new keeps the Gateway-owned directory (%s)",
+  async (mode) => {
+    const adoptExisting = mode === "adopt";
     const workspace = tempDirs.make("openclaw-acp-cwd-");
     const requestedCwd = path.join(workspace, "requested");
     const existingCwd = path.join(workspace, "existing");
@@ -45,15 +46,17 @@ test.each([false, true])(
       const agent = createAcpGatewayAgent(
         createAcpConnection(),
         createAcpGateway(request as GatewayClient["request"]),
-        { sessionStore },
+        { sessionStore, resetSession: mode === "fresh-reset" },
       );
       const created = await agent.newSession({
         ...createNewSessionRequest(requestedCwd),
         _meta: adoptExisting ? { sessionKey: existingKey } : {},
       });
       const session = sessionStore.getSession(created.sessionId);
-      expect(session).toBeDefined();
-      const sessionKey = session!.sessionKey;
+      if (!session) {
+        throw new Error("ACP session was not created");
+      }
+      const sessionKey = session.sessionKey;
       const persisted = loadSessionEntry({ agentId: "main", sessionKey, storePath });
       expect(persisted?.spawnedCwd).toBe(adoptExisting ? existingCwd : requestedCwd);
       const listed = await agent.listSessions({ cwd: adoptExisting ? existingCwd : requestedCwd });
