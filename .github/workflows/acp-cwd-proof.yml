@@ -34,7 +34,7 @@ jobs:
           git config user.name yinx65588-boop
           git config user.email 272180046+yinx65588-boop@users.noreply.github.com
           git add src/acp/translator.session-lifecycle.ts
-          git -c core.hooksPath=/dev/null commit -m 'test: select exact baseline source for CLI proof'
+          git commit -m 'test: select exact baseline source for CLI proof'
           pnpm build:ci-artifacts > .proof/build-baseline.log 2>&1
           ACP_CWD_BASELINE=1 node --import ./scripts/tsx.mjs .proof/acp-cwd-cli-proof.mjs | tee .proof/cli-baseline.log
       - name: Build and exercise the repaired source through public ACP
@@ -44,7 +44,7 @@ jobs:
           cp "$RUNNER_TEMP/acp-cwd-repair.ts" src/acp/translator.session-lifecycle.ts
           git diff --exit-code "$(cat .proof/proof-source.txt)" -- src/acp/translator.session-lifecycle.ts
           git add src/acp/translator.session-lifecycle.ts
-          git -c core.hooksPath=/dev/null commit -m 'test: restore exact repaired source for CLI proof'
+          git commit -m 'test: restore exact repaired source for CLI proof'
           pnpm build:ci-artifacts > .proof/build-repair.log 2>&1
           node --import ./scripts/tsx.mjs .proof/acp-cwd-cli-proof.mjs | tee .proof/cli-repair.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
