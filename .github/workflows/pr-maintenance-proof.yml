@@ -1,0 +1,1282 @@
+name: Autonomous session idle repair validation
+on:
+  push:
+    branches: [proof/session-idle-candidate-v1-177065]
+permissions:
+  contents: read
+env:
+  OPENCLAW_VITEST_RUNTIME: node
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.21.0'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Apply the complete candidate to the pinned baseline
+        run: |
+          cat > src/sessions/session-controller.state.ts <<'SOURCE'
+          import { randomUUID } from "node:crypto";
+          import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+          import { isEmbeddedRunHandleCompacting } from "../agents/embedded-agent-runner/runs.probes.js";
+          import { racePromiseWithAbortSignal } from "../infra/abort-signal.js";
+          import { notifyGatewayWorkMetricsChanged } from "../infra/gateway-work-metrics-events.js";
+          import { diagnosticLogger as diag, logSessionStateChange } from "../logging/diagnostic-runtime.js";
+          import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
+          import { assertTurnAdmission } from "./session-controller.admission-rule.js";
+          import {
+            REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS,
+            ReplyRunAlreadyActiveError,
+            type ReplyBackendHandle,
+            type ReplyOperation,
+            type ReplyOperationPhase,
+            type SessionControllerMailboxClaim,
+            type ReplyRunAdmissionSource,
+            type SessionControllerEntry,
+            type ReplyRunCompletionObservation,
+            sessionControllerOperationState,
+          } from "./session-controller.contracts.js";
+          import {
+            getSessionControllerEntryForOperation,
+            isCurrentSessionControllerOperation,
+          } from "./session-controller.identity.js";
+          import * as controllerStorage from "./session-controller.storage.js";
+          import { sessionTargetOwnersMatch, type SessionTarget } from "./session-controller.target.js";
+          import { emitSessionLifecycleEvent } from "./session-lifecycle-events.js";
+          
+          export {
+            sessionControllers,
+            controllerEntryByOperation,
+            lifecycleAdmissionByOperation,
+            evictReplyOperationByOperation,
+            operationsByUpstreamAbortSignal,
+            producerCompletionByOperation,
+          } from "./session-controller.storage.js";
+          export type {
+            ReplyRunAdmissionSource,
+            SessionControllerEntry,
+            ReplyOperationAdmission,
+          } from "./session-controller.contracts.js";
+          export { waitForReplyBarrierSettlement } from "./session-controller.settlement.js";
+          
+          /** Read the exact current owner's internal observations, never a replacement's state. */
+          export function readSessionControllerOperationState(operation: ReplyOperation | undefined) {
+            const active = operation && controllerStorage.controllerEntryByOperation.get(operation)?.active;
+            return active && active === operation ? active[sessionControllerOperationState] : undefined;
+          }
+          
+          /** Physical scope participates in selection, not just later writer validation. */
+          export function findSessionControllerEntries(
+            key: string,
+            target?: SessionTarget,
+          ): SessionControllerEntry[] {
+            const normalizedKey = key.trim();
+            const exact = target ? undefined : controllerStorage.sessionControllers.get(normalizedKey);
+            if (exact) {
+              return [exact];
+            }
+            const aliases = target?.aliases ?? [normalizedKey];
+            const candidates = new Set(
+              aliases.flatMap((alias) => [
+                ...(controllerStorage.sessionControllerEntriesByAlias.get(alias) ?? []),
+              ]),
+            );
+            const matches = [...candidates].filter(
+              (entry) =>
+                (!target || !entry.target || sessionTargetOwnersMatch(entry.target, target)) &&
+                aliases.some((alias) => entry.aliases.has(alias)),
+            );
+            if (matches.length > 1) {
+              diag.warn(
+                `ambiguous session controller identity: sessionKey=${key.trim()} entryIds=${matches
+                  .map((entry) => entry.id)
+                  .toSorted()
+                  .join(",")}`,
+              );
+            }
+            return matches;
+          }
+          export function findSessionControllerEntry(
+            key: string,
+            target?: SessionTarget,
+          ): SessionControllerEntry | undefined {
+            const exact = controllerStorage.sessionControllers.get(key);
+            // Registry IDs are private and never substituted for operation.key.
+            if (exact && exact.id !== exact.key && !target) {
+              return exact;
+            }
+            // Key-only lookup can overlap across stores while logical aliases and rekeys remain live.
+            const matches = findSessionControllerEntries(key, target);
+            return matches.length === 1 ? matches[0] : undefined;
+          }
+          export function bindSessionControllerEntryTarget(
+            entry: SessionControllerEntry,
+            target: SessionTarget,
+          ): void {
+            if (entry.target && entry.target.storeScope !== target.storeScope) {
+              throw new Error("Cannot move a controller between physical stores");
+            }
+            if (entry.target && !sessionTargetOwnersMatch(entry.target, target)) {
+              throw new Error("Cannot move a controller between agent owners");
+            }
+            const competing = findSessionControllerEntries(target.sessionKey, target).filter(
+              (candidate) => candidate !== entry,
+            );
+            if (competing.length) {
+              throw new Error("Physical session already has a different controller owner");
+            }
+            for (const alias of target.aliases) {
+              if (
+                alias !== target.incarnation &&
+                ![...(entry.lifecycle?.operations ?? [])].some((operation) =>
+                  operation.hasOwnedSessionId(alias),
+                )
+              ) {
+                entry.logicalAliases.add(alias);
+              }
+            }
+            // Nested logical lookups must retain the owner's prepared physical store and agent.
+            const agentId = target.agentId ?? entry.target?.agentId;
+            const physicalStorePath = target.physicalStorePath ?? entry.target?.physicalStorePath;
+            entry.target =
+              agentId !== target.agentId || physicalStorePath !== target.physicalStorePath
+                ? Object.freeze({ ...target, agentId, physicalStorePath })
+                : target;
+            const storeEntries =
+              controllerStorage.sessionControllerEntriesByStore.get(target.storeScope) ?? new Set();
+            storeEntries.add(entry);
+            controllerStorage.sessionControllerEntriesByStore.set(target.storeScope, storeEntries);
+            refreshSessionControllerEntryAliases(entry);
+          }
+          export function refreshSessionControllerEntryAliases(entry: SessionControllerEntry): void {
+            const previousAliases = entry.aliases;
+            entry.aliases = new Set(entry.logicalAliases);
+            if (entry.target?.incarnation) {
+              entry.aliases.add(entry.target.incarnation);
+            }
+            for (const target of entry.lifecycle?.targets.keys() ?? []) {
+              for (const alias of target.aliases) {
+                entry.aliases.add(alias);
+              }
+            }
+            for (const operation of entry.lifecycle?.operations ?? []) {
+              for (const id of operation.captureOwnedSessionIds()) {
+                entry.aliases.add(id);
+              }
+            }
+            if (entry.active) {
+              for (const id of entry.active.captureOwnedSessionIds()) {
+                entry.aliases.add(id);
+              }
+            }
+            unindexSessionControllerAliases(entry, previousAliases);
+            if (controllerStorage.sessionControllers.get(entry.id) !== entry) {
+              return;
+            }
+            for (const alias of entry.aliases) {
+              addSessionControllerEntryAlias(entry, alias);
+            }
+          }
+          function unindexSessionControllerAliases(entry: SessionControllerEntry, aliases: Set<string>) {
+            for (const alias of aliases) {
+              const entries = controllerStorage.sessionControllerEntriesByAlias.get(alias);
+              entries?.delete(entry);
+              if (entries?.size === 0) {
+                controllerStorage.sessionControllerEntriesByAlias.delete(alias);
+              }
+            }
+          }
+          
+          /** Adds a learned incarnation to the exact alias index. */
+          export function addSessionControllerEntryAlias(entry: SessionControllerEntry, alias: string): void {
+            entry.aliases.add(alias);
+            const entries = controllerStorage.sessionControllerEntriesByAlias.get(alias) ?? new Set();
+            entries.add(entry);
+            controllerStorage.sessionControllerEntriesByAlias.set(alias, entries);
+          }
+          export function getSessionControllerEntry(
+            key: string,
+            target?: SessionTarget,
+          ): SessionControllerEntry {
+            const canonicalKey = normalizeOptionalString(key);
+            if (!canonicalKey) {
+              throw new Error("Session controller requires a canonical session key");
+            }
+            const registered = controllerStorage.sessionControllers.get(canonicalKey);
+            if (registered && !target) {
+              return registered;
+            }
+            const matches = findSessionControllerEntries(canonicalKey, target);
+            if (matches.length > 1) {
+              if (matches.some((entry) => entry.active)) {
+                throw new ReplyRunAlreadyActiveError(canonicalKey);
+              }
+              throw new Error("Session controller identity requires a physical store scope");
+            }
+            let entry = matches[0];
+            if (!entry) {
+              entry = {
+                id: randomUUID(),
+                key: canonicalKey,
+                aliases: new Set([canonicalKey]),
+                logicalAliases: new Set([canonicalKey]),
+                waiters: new Set(),
+                observations: new Set(),
+              };
+              controllerStorage.sessionControllers.set(entry.id, entry);
+              addSessionControllerEntryAlias(entry, canonicalKey);
+            }
+            if (target) {
+              bindSessionControllerEntryTarget(entry, target);
+            }
+            return entry;
+          }
+          export {
+            getSessionControllerEntryForOperation,
+            hasSessionControllerIdentity,
+            isCurrentSessionControllerOperation,
+          } from "./session-controller.identity.js";
+          /** Drops an entry that holds no custody so historical session keys are not retained. */
+          export function pruneSessionControllerEntry(entry: SessionControllerEntry): void {
+            if (
+              !entry.active &&
+              !entry.attachment &&
+              !entry.sourceTurnId &&
+              !entry.waiters.size &&
+              !entry.followupBarrier &&
+              !entry.successorBarrier &&
+              !entry.observations.size &&
+              !entry.mailbox &&
+              !entry.lifecycle &&
+              controllerStorage.sessionControllers.get(entry.id) === entry
+            ) {
+              unindexSessionControllerAliases(entry, entry.aliases);
+              if (entry.target) {
+                const entries = controllerStorage.sessionControllerEntriesByStore.get(
+                  entry.target.storeScope,
+                );
+                entries?.delete(entry);
+                if (entries?.size === 0) {
+                  controllerStorage.sessionControllerEntriesByStore.delete(entry.target.storeScope);
+                }
+              }
+              controllerStorage.sessionControllers.delete(entry.id);
+            }
+          }
+          
+          export function getSessionControllerOperation(
+            key: string,
+            target?: SessionTarget,
+          ): ReplyOperation | undefined {
+            const normalizedKey = normalizeOptionalString(key);
+            if (!normalizedKey) {
+              return undefined;
+            }
+            const operations = findSessionControllerEntries(normalizedKey, target).flatMap((entry) =>
+              entry.active ? [entry.active] : [],
+            );
+            if (operations.length > 1) {
+              throw new ReplyRunAlreadyActiveError(key);
+            }
+            return operations[0];
+          }
+          export function* activeSessionOperations(): IterableIterator<ReplyOperation> {
+            for (const entry of controllerStorage.sessionControllers.values()) {
+              if (entry.active) {
+                yield entry.active;
+              }
+            }
+          }
+          
+          export { assertSessionControllerOperation } from "./session-controller.identity.js";
+          
+          export {
+            resolveControllerNativeAttempt,
+            attachControllerNativeAttempt,
+            detachControllerNativeAttempt,
+          } from "./session-controller.native-attempt.js";
+          
+          /** Observe owner departures only for the lifetime of one awaited admission attempt. */
+          export function observeReplyRunCompletions(sessionKey: string) {
+            const entry = getSessionControllerEntry(sessionKey);
+            const observation: ReplyRunCompletionObservation = { changed: false, sources: new Map() };
+            entry.observations.add(observation);
+            return {
+              read: () => (observation.changed ? [...observation.sources.values()] : undefined),
+              dispose: () => {
+                entry.observations.delete(observation);
+                observation.sources.clear();
+                pruneSessionControllerEntry(entry);
+              },
+            };
+          }
+          
+          export function resolveReplyOperationAgentId(sessionKey: string, agentId?: string) {
+            const owner = normalizeOptionalString(agentId) ?? parseAgentSessionKey(sessionKey)?.agentId;
+            return owner ? normalizeAgentId(owner) : undefined;
+          }
+          
+          export function prepareReplyRunKeyUpdate(
+            operation: ReplyOperation,
+            nextSessionKey: string,
+            agentId: string | undefined,
+            stateCleared: boolean,
+            mailboxClaim?: SessionControllerMailboxClaim,
+          ): { sessionKey: string; agentId?: string } | undefined {
+            const nextKey = normalizeOptionalString(nextSessionKey);
+            if (!nextKey) {
+              throw new Error("Reply operations require a canonical sessionKey");
+            }
+            const nextAgentId = resolveReplyOperationAgentId(nextKey, agentId) ?? operation.agentId;
+            if (nextKey === operation.key && nextAgentId === operation.agentId) {
+              return undefined;
+            }
+            // Running and settled operations have already published their abort/steer/wait identity.
+            const operationState = readSessionControllerOperationState(operation);
+            if (operation.result || stateCleared || operationState?.phase !== "queued") {
+              throw new Error(`Cannot rekey reply operation ${operation.key} in phase ${operation.phase}`);
+            }
+            const entry = getSessionControllerEntryForOperation(operation);
+            const destination = mailboxClaim?.mailbox.owner.target;
+            if (
+              operation.agentId &&
+              nextAgentId &&
+              normalizeAgentId(operation.agentId) !== normalizeAgentId(nextAgentId) &&
+              (!destination?.agentId ||
+                normalizeAgentId(destination.agentId) !== normalizeAgentId(nextAgentId))
+            ) {
+              throw new Error("Changing agent owner requires matching destination admission");
+            }
+            const target = entry.target
+              ? { ...entry.target, sessionKey: nextKey, aliases: [nextKey], agentId: nextAgentId }
+              : undefined;
+            const targetOwner = getSessionControllerOperation(nextKey, target);
+            if (targetOwner !== operation) {
+              const owner = mailboxClaim?.mailbox.owner ?? findSessionControllerEntry(nextKey, target);
+              if (owner) {
+                assertTurnAdmission(owner, {
+                  kind: operationState.turnKind,
+                  sessionKey: nextKey,
+                  registeredEntry: controllerStorage.sessionControllers.get(owner.id),
+                  claim: mailboxClaim,
+                });
+              }
+            }
+            return { sessionKey: nextKey, agentId: nextAgentId };
+          }
+          
+          export function notifyReplyRunEnded(entry: SessionControllerEntry): void {
+            for (const observation of entry.observations) {
+              observation.changed = true;
+            }
+            if (!entry.active) {
+              const waiters = entry.waiters;
+              entry.waiters = new Set();
+              for (const waiter of waiters) {
+                waiter.finish(true);
+              }
+            }
+            entry.mailbox?.wake();
+            pruneSessionControllerEntry(entry);
+          }
+          
+          export { resolveReplyRunForCurrentSessionId } from "./session-controller.identity.js";
+          
+          export function isReplyRunCompacting(operation: ReplyOperation): boolean {
+            const phase = readSessionControllerOperationState(operation)?.phase;
+            if (phase === "preflight_compacting" || phase === "memory_flushing") {
+              return true;
+            }
+            const backend = phase === "running" ? getAttachedBackend(operation) : undefined;
+            return backend ? isEmbeddedRunHandleCompacting(operation.sessionId, backend) === true : false;
+          }
+          
+          export function isReplyOperationPreBackendPhase(phase: ReplyOperationPhase): boolean {
+            return (
+              phase === "queued" ||
+              phase === "waiting_for_deferred_maintenance" ||
+              phase === "waiting_for_global_lane"
+            );
+          }
+          
+          export function markReplyOperationExecutionStarted(operation: ReplyOperation): void {
+            controllerStorage.executionStartedOperations.add(operation);
+            notifyGatewayWorkMetricsChanged();
+          }
+          export function hasReplyOperationExecutionStarted(operation: ReplyOperation): boolean {
+            return controllerStorage.executionStartedOperations.has(operation);
+          }
+          /** Backend run IDs stay the operation's identity after detach, until the operation settles. */
+          export function recordOperationBackendRunId(operation: ReplyOperation, runId: string | undefined) {
+            if (!runId) {
+              return;
+            }
+            const runIds = controllerStorage.backendRunIdsByOperation.get(operation) ?? new Set<string>();
+            runIds.add(runId);
+            controllerStorage.backendRunIdsByOperation.set(operation, runIds);
+          }
+          
+          export function hasOperationBackendRunId(operation: ReplyOperation, runId: string): boolean {
+            return controllerStorage.backendRunIdsByOperation.get(operation)?.has(runId) === true;
+          }
+          
+          export function getAttachedBackendAttachment(operation: ReplyOperation) {
+            const entry = controllerStorage.controllerEntryByOperation.get(operation);
+            return entry?.active === operation && entry.attachment?.operation === operation
+              ? entry.attachment.backend
+              : undefined;
+          }
+          
+          export function getAttachedBackend(operation: ReplyOperation): ReplyBackendHandle | undefined {
+            return getAttachedBackendAttachment(operation)?.handle;
+          }
+          
+          // Committed output belongs to the bounded finalization owner. Stale recovery
+          // must not cancel delivery after the backend has already produced its answer.
+          export function hasCommittedReplyOperationOutcome(operation: ReplyOperation): boolean {
+            return !operation.result && operation.abortFrozen;
+          }
+          
+          export function isReplyOperationAbortable(operation: ReplyOperation): boolean {
+            if (operation.result || operation.abortFrozen) {
+              return false;
+            }
+            const backend = getAttachedBackend(operation);
+            if (!backend?.isAbortable) {
+              return true;
+            }
+            try {
+              return backend.isAbortable();
+            } catch {
+              return false;
+            }
+          }
+          
+          /** Only the operation's own unforgeable signal can borrow its turn for preflight. */
+          export function resolveSessionControllerOperationForSignal(
+            signal: AbortSignal | undefined,
+          ): ReplyOperation | undefined {
+            const operation = signal && controllerStorage.operationsByUpstreamAbortSignal.get(signal);
+            return operation &&
+              signal === operation.abortSignal &&
+              isCurrentSessionControllerOperation(operation) &&
+              !operation.result &&
+              !signal.aborted
+              ? operation
+              : undefined;
+          }
+          
+          export function runAfterReplyOperationClear(
+            operation: ReplyOperation,
+            afterClear: (sessionId: string) => void,
+          ): void {
+            const afterClearState = controllerStorage.afterClearByOperation.get(operation);
+            if (!afterClearState?.barrier && !isCurrentSessionControllerOperation(operation)) {
+              const barrier = getSessionControllerEntryForOperation(operation).followupBarrier;
+              const source = barrier?.sources.get(
+                controllerStorage.lifecycleAdmissionByOperation.get(operation)?.databaseIdentity,
+              );
+              if (barrier && source) {
+                void barrier.settled.then(() => afterClear(source.sessionId));
+                return;
+              }
+              afterClear(operation.sessionId);
+              return;
+            }
+            const state = afterClearState ?? { callbacks: new Set<(sessionId: string) => void>() };
+            state.callbacks.add(afterClear);
+            controllerStorage.afterClearByOperation.set(operation, state);
+          }
+          
+          export function isReplyOperationAbortedForRestart(operation: ReplyOperation): boolean {
+            return operation.result?.kind === "aborted" && operation.result.code === "aborted_for_restart";
+          }
+          
+          export function mergeReplyRunAdmissionSource<T extends ReplyRunAdmissionSource>(
+            source: T,
+            previous?: ReplyRunAdmissionSource,
+          ): T {
+            // Only a connected, non-restarted lineage in one store merges, in place so retained
+            // clear callbacks keep a stable source reference.
+            if (
+              previous &&
+              !isReplyOperationAbortedForRestart(previous.operation) &&
+              previous.databaseIdentity === source.databaseIdentity &&
+              source.sessionIds.has(previous.sessionId)
+            ) {
+              for (const id of source.sessionIds) {
+                previous.sessionIds.add(id);
+              }
+              return Object.assign(previous, source, { sessionIds: previous.sessionIds });
+            }
+            return source;
+          }
+          
+          /** Carries the exact operation lineage and physical database into an admission fence. */
+          export function resolveReplyRunAdmissionSource(
+            operation: ReplyOperation,
+            sessionId: string,
+            previous?: ReplyRunAdmissionSource,
+          ): ReplyRunAdmissionSource {
+            return mergeReplyRunAdmissionSource(
+              {
+                sessionId,
+                sessionIds: operation.captureOwnedSessionIds(),
+                operation,
+                databaseIdentity:
+                  controllerStorage.lifecycleAdmissionByOperation.get(operation)?.databaseIdentity,
+              },
+              previous,
+            );
+          }
+          
+          export function clearReplyRunState(params: {
+            sessionKey: string;
+            sessionId: string;
+            operation: ReplyOperation;
+          }): void {
+            const entry = getSessionControllerEntryForOperation(params.operation);
+            if (!isCurrentSessionControllerOperation(params.operation)) {
+              return;
+            }
+            for (const observation of entry.observations) {
+              if (
+                !params.operation.result ||
+                params.operation.key !== params.sessionKey ||
+                isReplyOperationAbortedForRestart(params.operation)
+              ) {
+                observation.sources.clear();
+                continue;
+              }
+              const source = resolveReplyRunAdmissionSource(params.operation, params.sessionId);
+              observation.sources.set(
+                source.databaseIdentity,
+                mergeReplyRunAdmissionSource(source, observation.sources.get(source.databaseIdentity)),
+              );
+            }
+            entry.active = undefined;
+            if (entry.attachment?.operation === params.operation) {
+              entry.attachment = undefined;
+            }
+            entry.sourceTurnId = undefined;
+            logSessionStateChange({
+              sessionKey: params.sessionKey,
+              sessionId: params.sessionId,
+              state: "idle",
+              reason: "reply_operation_ended",
+              consumeQueuedTurn: false,
+            });
+            notifyGatewayWorkMetricsChanged();
+            notifyReplyRunEnded(entry);
+            // Autonomous turns have no RPC finalizer to publish activity after slot release.
+            emitSessionLifecycleEvent({
+              sessionKey: params.sessionKey,
+              agentId: params.operation.agentId,
+              reason: "agent.input.settled",
+              scope: "runtime",
+            });
+          }
+          
+          /** Incoming sources consult the same owner policy as the autonomous timer. */
+          export function isReplyRunEvidenceStale(operation: ReplyOperation): boolean {
+            const action = operation.watchdog.decide().action;
+            return action === "stop" || action === "expire_cleanup" || action === "blocked";
+          }
+          
+          export function expireVisibleStaleOperation(operation: ReplyOperation | undefined): boolean {
+            if (!operation) {
+              return false;
+            }
+            void operation.watchdog.tick();
+            return !isCurrentSessionControllerOperation(operation);
+          }
+          
+          export function resolveVisibleActiveWaitMs(operation: ReplyOperation | undefined): number {
+            const deadline = operation?.watchdog.decide().deadlineAtMs;
+            return deadline === undefined
+              ? REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS
+              : Math.min(REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS, Math.max(1, deadline - Date.now()));
+          }
+          
+          export {
+            getReplyOperationSessionReader,
+            getReplyOperationSessionTarget,
+            acquireReplyOperationSessionActor,
+            captureReplyOperationSessionReader,
+            acknowledgeReplySessionTransition,
+          } from "./session-controller.session-reader.js";
+          
+          /** Await only this exact startup; neither a successor nor a new backend can satisfy it. */
+          export async function waitForReplyOperationBackend(
+            operation: ReplyOperation,
+            signal?: AbortSignal,
+          ): Promise<boolean> {
+            const entry = getSessionControllerEntryForOperation(operation);
+            const key = operation.key;
+            const current = () =>
+              operation.key === key &&
+              entry.active === operation &&
+              !operation.result &&
+              !operation.abortSignal.aborted;
+            signal?.throwIfAborted();
+            if (!current()) {
+              return false;
+            }
+            const ready = controllerStorage.backendReadyByOperation.get(operation);
+            if (ready) {
+              await racePromiseWithAbortSignal(ready, signal);
+            }
+            return (
+              controllerStorage.backendReadyByOperation.get(operation) === ready &&
+              current() &&
+              readSessionControllerOperationState(operation)?.phase === "running" &&
+              entry.attachment?.backend !== undefined
+            );
+          }
+          SOURCE
+          cat > src/gateway/server-session-lifecycle-events.test.ts <<'SOURCE'
+          import { beforeEach, describe, expect, it, vi } from "vitest";
+          import { createDeferred } from "../../test/helpers/promise.js";
+          import { registerAgentRunCapacityWait } from "../infra/agent-run-capacity-wait.js";
+          import {
+            clearAgentRunContext,
+            getAgentRunLifecycleGeneration,
+            registerAgentRunContext,
+          } from "../infra/agent-run-registry.js";
+          import { rpcSourceTesting } from "../sessions/session-lifecycle-admission.test-support.js";
+          import { captureSessionTarget } from "../sessions/session-controller.lifecycle.js";
+          import { createReplyOperation } from "../sessions/session-controller.operation.js";
+          import { markReplyOperationExecutionStarted } from "../sessions/session-controller.state.js";
+          import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
+          import {
+            createActiveRun,
+            createGatewayBroadcaster,
+            createLifecycleEventBroadcastHandler,
+            expectPrivateSessionInvalidation,
+            fixedStoreRuntimeConfig,
+            loadGatewaySessionEntryReadOnlyMock,
+            loadGatewaySessionRowMock,
+            ownerGoal,
+            runtimeConfigState,
+            sessionRow,
+            subscribePluginSessionsChanged,
+          } from "./server-session-events.test-support.js";
+          import { GatewayClientRegistry } from "./server/client-registry.js";
+          import { createSessionRowProjectionFixture } from "./session-row-projection.test-support.js";
+          
+          describe("createLifecycleEventBroadcastHandler", () => {
+            beforeEach(() => {
+              vi.clearAllMocks();
+              loadGatewaySessionRowMock.mockReturnValue(sessionRow);
+              runtimeConfigState.value = {};
+              sessionRow.key = "agent:main:main";
+              loadGatewaySessionEntryReadOnlyMock.mockReset().mockReturnValue({ entry: sessionRow });
+            });
+            it.each([false, true])(
+              "publishes aggregate activity after autonomous execution settles with overlap=%s",
+              async (overlap) => {
+                rpcSourceTesting.reset([]);
+                const operation = createReplyOperation({
+                  sessionKey: sessionRow.key,
+                  sessionId: sessionRow.sessionId,
+                  agentId: "main",
+                  resetTriggered: false,
+                  target: captureSessionTarget({
+                    storeScope: "/tmp/session-events-fixture.sqlite",
+                    sessionKey: sessionRow.key,
+                    incarnation: sessionRow.sessionId,
+                    agentId: "main",
+                  }),
+                });
+                markReplyOperationExecutionStarted(operation);
+                const releaseExecution = operation.retainExecution();
+                const overlappingRunId = "overlapping-execution-settlement";
+                if (overlap) {
+                  registerAgentRunContext(overlappingRunId, {
+                    sessionKey: sessionRow.key,
+                    sessionId: sessionRow.sessionId,
+                    agentId: "main",
+                    projectSessionActive: true,
+                  });
+                }
+                const broadcastToConnIds = vi.fn();
+                const handler = createLifecycleEventBroadcastHandler({
+                  broadcastToConnIds,
+                  sessionEventSubscribers: { getAll: () => new Set(["observer"]) },
+                });
+                const publications: Promise<void>[] = [];
+                const unsubscribe = onSessionLifecycleEvent((event) => {
+                  if (event.sessionKey === sessionRow.key && event.reason === "agent.input.settled") {
+                    publications.push(handler(event));
+                  }
+                });
+                try {
+                  // A terminal model snapshot can precede release of the real execution owner.
+                  await handler({ sessionKey: sessionRow.key, agentId: "main", reason: "end" });
+                  expect(broadcastToConnIds.mock.calls.at(-1)?.[1]).toMatchObject({ hasActiveRun: true });
+                  operation.complete();
+                  expect(publications).toHaveLength(0);
+          
+                  releaseExecution();
+                  await operation.ownerSettlement;
+                  await Promise.all(publications);
+          
+                  expect(broadcastToConnIds.mock.calls.at(-1)?.[1]).toMatchObject({
+                    reason: "agent.input.settled",
+                    hasActiveRun: overlap,
+                  });
+                } finally {
+                  releaseExecution();
+                  operation.complete();
+                  await operation.ownerSettlement;
+                  await Promise.allSettled(publications);
+                  unsubscribe();
+                  clearAgentRunContext(overlappingRunId);
+                }
+              },
+            );
+          
+            it.each([
+              "participants",
+              "subagent-status",
+              "run-capacity",
+              "swarm",
+              "swarm-note",
+              "github-publication",
+              "worker-disk-space",
+            ])("carries the affected row for %s", async (reason) => {
+              const broadcastToConnIds = vi.fn();
+              const handler = createLifecycleEventBroadcastHandler({
+                broadcastToConnIds,
+                sessionEventSubscribers: { getAll: () => new Set(["observer"]) },
+              });
+              await handler({
+                sessionKey: sessionRow.key,
+                agentId: "main",
+                reason,
+                ...(["swarm", "swarm-note", "run-capacity"].includes(reason)
+                  ? { scope: "runtime" as const }
+                  : reason === "participants"
+                    ? { scope: "session-entry" as const }
+                    : {}),
+              });
+              expect(broadcastToConnIds.mock.calls[0]?.[1]).not.toHaveProperty("scope");
+              expect(broadcastToConnIds.mock.calls[0]?.[1]).toMatchObject({
+                reason,
+                session: { key: sessionRow.key, sessionId: sessionRow.sessionId },
+              });
+            });
+            it.each([
+              {
+                name: "missing capture",
+                captured: false,
+                projection: true,
+                replace: true,
+                delivered: true,
+              },
+              {
+                name: "current capture",
+                captured: true,
+                projection: true,
+                replace: false,
+                delivered: true,
+              },
+              {
+                name: "replaced capture",
+                captured: true,
+                projection: true,
+                replace: true,
+                delivered: false,
+              },
+              {
+                name: "no-projection fallback",
+                captured: false,
+                projection: false,
+                replace: false,
+                delivered: true,
+              },
+            ])("keeps lifecycle publication data bound for $name", async (scenario) => {
+              const prepared = createDeferred();
+              const entered = createDeferred();
+              const query = { key: "agent:main:late-successor", agentId: "main" };
+              const projection = createSessionRowProjectionFixture({
+                cfg: {},
+                agentId: query.agentId,
+                store: scenario.captured
+                  ? {
+                      [query.key]: {
+                        sessionId: "original",
+                        updatedAt: 1,
+                        lifecycleRevision: "first",
+                        label: "Original row",
+                      },
+                    }
+                  : {},
+              });
+              const prepareRows = projection.withPreparedExactRows.bind(projection);
+              vi.spyOn(projection, "withPreparedExactRows").mockImplementation(async (...args) => {
+                entered.resolve();
+                await prepared.promise;
+                return prepareRows(...args);
+              });
+              const broadcastToConnIds = vi.fn();
+              const handler = createLifecycleEventBroadcastHandler({
+                broadcastToConnIds,
+                sessionEventSubscribers: { getAll: () => new Set(["reader"]) },
+                getSessionRowProjection: () => (scenario.projection ? projection : undefined),
+              });
+              const pending = handler({
+                agentId: query.agentId,
+                sessionKey: query.key,
+                reason: "swarm-note",
+                swarmGroupId: "original-swarm",
+                kind: "log",
+                text: "Original private note",
+                label: "Old event label",
+                displayName: "Old event display",
+                parentSessionKey: "agent:main:old-parent",
+                catalogChanged: true,
+              });
+              try {
+                if (scenario.projection) {
+                  await entered.promise;
+                  expect(broadcastToConnIds).not.toHaveBeenCalled();
+                }
+                if (scenario.replace) {
+                  projection.setEntry(query.key, {
+                    sessionId: "successor",
+                    updatedAt: 2,
+                    lifecycleRevision: "next",
+                    label: "Successor row",
+                  });
+                }
+                prepared.resolve();
+                await pending;
+                if (!scenario.delivered) {
+                  expect(broadcastToConnIds).not.toHaveBeenCalled();
+                  return;
+                }
+                expect(broadcastToConnIds).toHaveBeenCalledOnce();
+                const payload = broadcastToConnIds.mock.calls[0]?.[1];
+                expect(payload).toMatchObject({ sessionKey: query.key, catalogChanged: true });
+                if (scenario.projection && !scenario.captured) {
+                  expect(payload).toMatchObject({
+                    reason: "updated",
+                    label: "Successor row",
+                    session: { sessionId: "successor", lifecycleRevision: "next", label: "Successor row" },
+                  });
+                  expect(JSON.stringify(payload)).not.toContain('"swarmGroupId":');
+                  expect(payload).toHaveProperty("kind", "direct");
+                  expect(payload).not.toHaveProperty("text");
+                  expect(payload.displayName).not.toBe("Old event display");
+                  expect(payload.parentSessionKey).not.toBe("agent:main:old-parent");
+                } else {
+                  expect(payload).toMatchObject({
+                    reason: "swarm-note",
+                    swarmGroupId: "original-swarm",
+                    kind: "log",
+                    text: "Original private note",
+                    label: "Old event label",
+                    displayName: "Old event display",
+                    parentSessionKey: "agent:main:old-parent",
+                  });
+                  if (scenario.projection) {
+                    expect(payload).toMatchObject({
+                      session: { sessionId: "original", lifecycleRevision: "first" },
+                    });
+                  } else {
+                    expect(payload).not.toHaveProperty("session");
+                  }
+                }
+              } finally {
+                prepared.resolve();
+                await Promise.allSettled([pending]);
+                projection.dispose();
+              }
+            });
+          
+            it("keeps delayed key-only deletes as invalidations without borrowing a replacement", async () => {
+              const broadcastToConnIds = vi.fn();
+              const handler = createLifecycleEventBroadcastHandler({
+                broadcastToConnIds,
+                sessionEventSubscribers: { getAll: () => new Set(["observer"]) },
+              });
+              await handler({ sessionKey: sessionRow.key, reason: "delete" });
+              expect(broadcastToConnIds).toHaveBeenCalledWith(
+                "sessions.changed",
+                { sessionKey: sessionRow.key, agentId: "main", reason: "delete", ts: expect.any(Number) },
+                new Set(["observer"]),
+                expect.any(Object),
+              );
+              expect(loadGatewaySessionRowMock).not.toHaveBeenCalled();
+            });
+          
+            it.each(["swarm", "run-capacity"])(
+              "includes complete collector counts for committed parent changes (%s)",
+              async (reason) => {
+                const broadcastToConnIds = vi.fn();
+                loadGatewaySessionRowMock.mockImplementation(() => ({
+                  ...sessionRow,
+                  swarm: undefined,
+                }));
+                const handler = createLifecycleEventBroadcastHandler({
+                  broadcastToConnIds,
+                  sessionEventSubscribers: { getAll: () => new Set(["observer"]) },
+                });
+          
+                await handler({ sessionKey: sessionRow.key, agentId: "main", reason });
+          
+                expect(loadGatewaySessionRowMock).toHaveBeenCalledWith(sessionRow.key, {
+                  agentId: "main",
+                });
+                const payload = broadcastToConnIds.mock.calls[0]?.[1];
+                expect(payload).toHaveProperty("swarm", null);
+              },
+            );
+          
+            it.each(["phase", "log"] as const)("projects swarm %s payload fields", async (kind) => {
+              const broadcastToConnIds = vi.fn();
+              const handler = createLifecycleEventBroadcastHandler({
+                broadcastToConnIds,
+                sessionEventSubscribers: { getAll: () => new Set(["conn-1"]) },
+              });
+          
+              await handler({
+                sessionKey: "agent:main:main",
+                reason: "swarm-note",
+                swarmGroupId: "swarm:agent:main:main:run-1",
+                kind,
+                text: "Research",
+              });
+          
+              expect(broadcastToConnIds).toHaveBeenCalledWith(
+                "sessions.changed",
+                expect.objectContaining({
+                  swarmGroupId: "swarm:agent:main:main:run-1",
+                  kind,
+                  text: "Research",
+                }),
+                new Set(["conn-1"]),
+                {
+                  dropIfSlow: true,
+                  sessionEventSubscriptionKeys: ["agent:main:main"],
+                  prepareSessionProjection: expect.any(Function),
+                },
+              );
+            });
+          
+            it("publishes lifecycle changes to plugins without websocket subscribers", async () => {
+              const received = vi.fn();
+              const unsubscribe = subscribePluginSessionsChanged(received);
+              const { broadcastToConnIds } = createGatewayBroadcaster({
+                clients: new GatewayClientRegistry(),
+              });
+              const handler = createLifecycleEventBroadcastHandler({
+                broadcastToConnIds,
+                sessionEventSubscribers: { getAll: () => new Set() },
+              });
+          
+              try {
+                await handler({
+                  sessionKey: "agent:main:main",
+                  reason: "rename",
+                  label: "Renamed session",
+                });
+                await Promise.resolve();
+                expect(received).toHaveBeenCalledWith({
+                  sessionKey: "agent:main:main",
+                  agentId: "main",
+                  label: "Renamed session",
+                  reason: "rename",
+                });
+              } finally {
+                unsubscribe();
+              }
+            });
+          
+            it.each([
+              { name: "projects configured persisted state without publishing its goal" },
+              { name: "publishes active state and goal for the explicit owner", agentId: "ops" },
+            ])("$name through capacity transitions without a refresh", async ({ agentId }) => {
+              runtimeConfigState.value = fixedStoreRuntimeConfig("ops", ["ops", "research"]);
+              sessionRow.key = "global";
+              const goal = { ...ownerGoal };
+              loadGatewaySessionRowMock.mockReturnValue({ ...sessionRow, goal });
+              const activeRun = createActiveRun(true, true, {
+                agentId: "ops",
+                sessionKey: "global",
+                sessionId: sessionRow.sessionId,
+              });
+              const broadcastToConnIds = vi.fn();
+              rpcSourceTesting.reset([["run-before-finalize", activeRun]]);
+              const handler = createLifecycleEventBroadcastHandler({
+                broadcastToConnIds,
+                sessionEventSubscribers: { getAll: () => new Set(["conn-1"]) },
+              });
+          
+              await handler({ sessionKey: "global", ...(agentId ? { agentId } : {}), reason: "updated" });
+          
+              expect(loadGatewaySessionRowMock).toHaveBeenCalledWith("global", { agentId: "ops" });
+              expect(broadcastToConnIds).toHaveBeenCalledWith(
+                "sessions.changed",
+                expect.objectContaining({
+                  sessionKey: "global",
+                  hasActiveRun: true,
+                  activeRunIds: ["run-before-finalize"],
+                }),
+                new Set(["conn-1"]),
+                {
+                  dropIfSlow: true,
+                  sessionEventSubscriptionKeys: ["agent:ops:global", "global"],
+                  prepareSessionProjection: expect.any(Function),
+                },
+              );
+              const payload = broadcastToConnIds.mock.calls[0]?.[1];
+              if (agentId) {
+                expect(payload).toMatchObject({ agentId: "ops", goal });
+              } else {
+                expect(payload).not.toHaveProperty("agentId");
+                expect(payload).not.toHaveProperty("goal");
+                expect(payload).not.toHaveProperty("session.goal");
+              }
+              const runId = "run-before-finalize";
+              registerAgentRunContext(runId, { sessionKey: "global", agentId: "ops" });
+              const publications: Promise<void>[] = [];
+              const unsubscribe = onSessionLifecycleEvent((event) => {
+                publications.push(handler(event));
+              });
+              const releaseWait = registerAgentRunCapacityWait(runId, getAgentRunLifecycleGeneration());
+              try {
+                releaseWait?.();
+                await Promise.all(publications);
+                const transitions = broadcastToConnIds.mock.calls.slice(1);
+                expect(
+                  transitions.map(([, event]) => [event.reason, event.status, event.hasActiveRun]),
+                ).toEqual([
+                  ["run-capacity", "queued", true],
+                  ["run-capacity", "running", true],
+                ]);
+              } finally {
+                unsubscribe();
+                releaseWait?.();
+                try {
+                  await Promise.all(publications);
+                } finally {
+                  clearAgentRunContext(runId);
+                }
+              }
+            });
+          
+            it("publishes only a private invalidation for a retired fixed-store lifecycle owner", async () => {
+              runtimeConfigState.value = fixedStoreRuntimeConfig("ops", ["research"]);
+              const broadcastToConnIds = vi.fn();
+              const handler = createLifecycleEventBroadcastHandler({
+                broadcastToConnIds,
+                sessionEventSubscribers: { getAll: () => new Set(["conn-events"]) },
+              });
+          
+              await handler({ sessionKey: "global", reason: "patch", catalogChanged: true });
+          
+              expect(loadGatewaySessionRowMock).not.toHaveBeenCalled();
+              expect(broadcastToConnIds).toHaveBeenCalledWith(
+                "sessions.changed",
+                expect.objectContaining({ sessionKey: "global", reason: "patch", catalogChanged: true }),
+                new Set(["conn-events"]),
+                {
+                  agentId: "ops",
+                  dropIfSlow: true,
+                  sessionEventSubscriptionKeys: ["agent:ops:global"],
+                  sessionKeys: ["agent:ops:global"],
+                },
+              );
+              expectPrivateSessionInvalidation(broadcastToConnIds.mock.calls[0]?.[1]);
+            });
+          });
+          SOURCE
+      - name: Validate gateway consumers, owner lint, formatting and types
+        run: |
+          mkdir -p .proof
+          pnpm test:gateway src/gateway/session-message-events.exec-completion.test.ts src/gateway/server-session-lifecycle-events.test.ts src/gateway/server-chat.agent-events.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/gateway-tests.json > .proof/gateway-tests.log 2>&1
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 src/sessions/session-controller.state.ts src/gateway/server-session-lifecycle-events.test.ts > .proof/lint.log 2>&1
+          pnpm exec oxfmt --check src/sessions/session-controller.state.ts src/gateway/server-session-lifecycle-events.test.ts > .proof/format.log 2>&1
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          fs.writeFileSync('.proof/tsconfig.idle-tests.json', JSON.stringify({extends:'../test/tsconfig/tsconfig.core.test.shard.json',compilerOptions:{tsBuildInfoFile:'../.artifacts/tsgo-cache/idle-tests.tsbuildinfo'},include:['../test/types/vitest-codex-attempt-runtime.d.ts','../src/**/*.d.ts','../ui/**/*.d.ts','../extensions/**/*.d.ts','../packages/**/*.d.ts','../src/gateway/server-session-lifecycle-events.test.ts']}));
+          JS
+          node scripts/run-tsgo.mjs -p .proof/tsconfig.idle-tests.json --incremental > .proof/types.log 2>&1
+          git diff --check
+      - name: Prove repaired autonomous idle push through public Gateway
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p .proof
+          git rev-parse HEAD | tee .proof/source-sha.txt
+          cat > .proof/session-idle-cli.mjs <<'JS'
+          import assert from 'node:assert/strict';
+          import { spawn } from 'node:child_process';
+          import { randomUUID } from 'node:crypto';
+          import fs from 'node:fs/promises';
+          import http from 'node:http';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { setTimeout as delay } from 'node:timers/promises';
+          
+          const root = await fs.mkdtemp(path.join(os.tmpdir(), 'openclaw-idle-proof-'));
+          const proofDir = path.resolve('.proof/session-idle');
+          await fs.mkdir(proofDir, { recursive: true });
+          Object.assign(process.env, { OPENCLAW_STATE_DIR: path.join(root, 'state'), OPENCLAW_CONFIG_PATH: path.join(root, 'openclaw.json'), OPENCLAW_HOME: path.join(root, 'home'), OPENCLAW_HIDE_BANNER: '1' });
+          const { acquireTestPortBlock } = await import('../src/test-utils/port-claims.ts');
+          const { GatewayClient } = await import('../src/gateway/client.ts');
+          const { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_CAPS } = await import('../packages/gateway-protocol/src/client-info.ts');
+          const claim = await acquireTestPortBlock({ offsets: [0] });
+          const token = 'synthetic-idle-proof-token';
+          const gatewayUrl = `ws://127.0.0.1:${claim.port}`;
+          const workspace = path.join(root, 'workspace');
+          await fs.mkdir(workspace, { recursive: true });
+          const holdScript = path.join(workspace, 'background-hold.mjs');
+          const key = 'agent:main:session-idle-proof';
+          const events = [];
+          const ledger = [];
+          let heldResponse;
+          let fixtureError;
+          let gateway;
+          let client;
+          let stdout = '', stderr = '';
+          let gatewayClosed = false;
+          const waitFor = async (read, label, timeoutMs = 60000) => {
+            const deadline = Date.now() + timeoutMs;
+            for (;;) {
+              assert.ifError(fixtureError);
+              assert(!gatewayClosed, `Gateway exited while waiting for ${label}: ${stderr.slice(-3000)}`);
+              const result = await read();
+              if (result) return result;
+              assert(Date.now() < deadline, `Timed out waiting for ${label}`);
+              await delay(50);
+            }
+          };
+          const server = http.createServer(async (request, response) => {
+            try {
+              if (request.method === 'GET' && request.url === '/hold-exec') {
+                assert(!heldResponse, 'only one background process expected');
+                heldResponse = response;
+                return;
+              }
+              assert.equal(request.method, 'POST');
+              assert.equal(request.url, '/v1/chat/completions');
+              let raw = '';
+              for await (const chunk of request) raw += chunk;
+              const body = JSON.parse(raw);
+              const number = ledger.length + 1;
+              assert(number <= 6, 'unexpected inference loop');
+              ledger.push({ number, toolResults: body.messages.filter(m => m.role === 'tool').map(m => String(m.content).slice(0, 350)) });
+              const command = `node '${holdScript}'`;
+              const delta = number === 2
+                ? { role: 'assistant', tool_calls: [{ index: 0, id: 'idle_exec', type: 'function', function: { name: 'exec', arguments: JSON.stringify({ command, background: true }) } }] }
+                : { role: 'assistant', content: number === 1 ? 'CONTROL_TURN_DONE' : number === 3 ? 'INITIAL_TURN_DONE' : 'BACKGROUND_NOTICE_DONE' };
+              if (number === 2) assert(body.tools.some(t => t.function.name === 'exec'), 'real exec must be available');
+              response.writeHead(200, { 'content-type': 'text/event-stream' });
+              response.end(`data: ${JSON.stringify({ id: `idle-proof-${number}`, object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: number === 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } })}\n\ndata: [DONE]\n\n`);
+            } catch (error) {
+              fixtureError = error;
+              response.writeHead(500);
+              response.end('Synthetic fixture failed');
+            }
+          });
+          await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+          try {
+            await fs.writeFile(holdScript, `const response = await fetch('http://127.0.0.1:${server.address().port}/hold-exec'); console.log(await response.text());\n`);
+            await fs.writeFile(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+              gateway: { mode: 'local', auth: { mode: 'token', token } }, cron: { enabled: true },
+              plugins: { enabled: false }, env: { shellEnv: { enabled: false } },
+              tools: { allow: ['exec', 'process'], codeMode: { enabled: false }, exec: { host: 'gateway', mode: 'full', notifyOnExit: true } },
+              agents: { entries: { main: {} }, defaults: { workspace, systemAgent: { agentId: 'main' }, model: { primary: 'proof-idle/model' }, models: { 'proof-idle/model': { agentRuntime: { id: 'openclaw' } } } } },
+              models: { providers: { 'proof-idle': { api: 'openai-completions', apiKey: 'synthetic-unused-key', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, request: { allowPrivateNetwork: true }, models: [{ id: 'model', name: 'Synthetic idle proof', reasoning: false, input: ['text'], contextWindow: 32000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } },
+            }));
+            gateway = spawn('pnpm', ['--silent', 'openclaw', 'gateway', 'run', '--port', String(claim.port), '--bind', 'loopback'], { env: process.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+            gateway.stdout.on('data', chunk => stdout += chunk);
+            gateway.stderr.on('data', chunk => stderr += chunk);
+            gateway.done = new Promise((resolve, reject) => { gateway.on('error', reject); gateway.on('close', code => { gatewayClosed = true; resolve(code); }); });
+            await waitFor(async () => { try { return (await fetch(`http://127.0.0.1:${claim.port}/healthz`)).ok; } catch { return false; } }, 'healthy isolated Gateway', 240000);
+            let readyResolve, readyReject;
+            const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+            client = new GatewayClient({ url: gatewayUrl, token, clientName: GATEWAY_CLIENT_IDS.CLI, mode: GATEWAY_CLIENT_MODES.CLI, caps: [GATEWAY_CLIENT_CAPS.SESSION_SCOPED_EVENTS], role: 'operator', scopes: ['operator.admin'], onHelloOk: readyResolve, onConnectError: readyReject, onEvent: event => {
+              const p = event.payload ?? {};
+              if (['sessions.changed', 'agent', 'chat'].includes(event.event)) events.push({ event: event.event, at: Date.now(), sessionKey: p.sessionKey, runId: p.runId, phase: p.data?.phase ?? p.phase, state: p.state, reason: p.reason, hasActiveRun: p.hasActiveRun ?? p.session?.hasActiveRun });
+            } });
+            client.start();
+            await ready;
+            await client.request('sessions.create', { key, label: 'Idle publication fixture' });
+            await client.request('sessions.subscribe', {});
+            const warmup = await client.request('chat.send', { sessionKey: key, message: 'Reply briefly without tools.', idempotencyKey: randomUUID(), thinking: 'off' });
+            await fs.writeFile(path.join(proofDir, 'control-run.json'), JSON.stringify(warmup));
+            await waitFor(() => ledger.length >= 1 && events.some(e => e.event === 'sessions.changed' && e.sessionKey === key && e.hasActiveRun === false), 'independent plain RPC turn idle push control');
+            const sent = await client.request('chat.send', { sessionKey: key, message: 'Start the requested command in the background, then reply briefly.', idempotencyKey: randomUUID(), thinking: 'off' });
+            await fs.writeFile(path.join(proofDir, 'background-parent-run.json'), JSON.stringify(sent));
+            assert.equal(typeof sent.runId, 'string');
+            await waitFor(() => heldResponse && ledger.length >= 3, 'background exec returned to the model before release');
+            await waitFor(async () => {
+              const listing = await client.request('sessions.list', {});
+              return listing.sessions.some(s => s.key === key && s.hasActiveRun === false);
+            }, 'background parent settled before releasing exec');
+            assert(ledger[2].toolResults.some(result => result.includes('still running')), 'exec must genuinely return a background process session');
+            const releasedAt = Date.now();
+            heldResponse.writeHead(200, { 'content-type': 'text/plain' });
+            heldResponse.end('BACKGROUND_COMMAND_FINISHED');
+            const terminal = await waitFor(() => ledger.length >= 4 && events.find(e => e.at >= releasedAt && e.event === 'sessions.changed' && e.sessionKey === key && e.runId !== sent.runId && e.runId !== warmup.runId && e.phase === 'end'), 'autonomous exec-completion run terminal', 90000);
+            assert(ledger.length >= 4, 'completion must actually invoke the agent');
+            const idleRow = await waitFor(async () => {
+              const listing = await client.request('sessions.list', {});
+              const row = listing.sessions.find(s => s.key === key);
+              return row && row.hasActiveRun === false ? row : false;
+            }, 'authoritative idle row');
+            const idleObservedAt = Date.now();
+            // This observes absence beyond the existing 500 ms event coalescing bound.
+            await delay(1500);
+            const followupChanges = events.filter(e => e.event === 'sessions.changed' && e.sessionKey === key && e.at >= releasedAt);
+            const idlePush = followupChanges.some(e => e.at >= terminal.at && e.hasActiveRun === false);
+            const baseline = process.argv[2] === 'baseline';
+            assert.equal(idlePush, !baseline, 'autonomous turn must publish its settled idle state');
+            const summary = { baseline, modelEndpointOnlySynthetic: true, paidProviderCalls: 0, modelRequests: ledger.length, initialRpcIdleControl: true, backgroundRunId: terminal.runId, authoritativeRowIdle: idleRow.hasActiveRun === false, autonomousIdlePush: idlePush, observationAfterRowIdleMs: Date.now() - idleObservedAt, lastPush: followupChanges.at(-1) };
+            await fs.writeFile(path.join(proofDir, 'summary.json'), JSON.stringify(summary, null, 2));
+            console.log(JSON.stringify(summary));
+          } finally {
+            client?.stop();
+            server.closeAllConnections();
+            if (gateway && !gatewayClosed) {
+              try { process.kill(-gateway.pid, 'SIGTERM'); } catch {}
+              await Promise.race([gateway.done, delay(5000)]);
+              if (!gatewayClosed) { try { process.kill(-gateway.pid, 'SIGKILL'); } catch {} }
+              await gateway.done;
+            }
+            await fs.writeFile(path.join(proofDir, 'gateway.stdout.log'), stdout);
+            await fs.writeFile(path.join(proofDir, 'gateway.stderr.log'), stderr);
+            await fs.writeFile(path.join(proofDir, 'events.json'), JSON.stringify(events, null, 2));
+            await fs.writeFile(path.join(proofDir, 'request-ledger.json'), JSON.stringify(ledger, null, 2));
+            await new Promise(resolve => server.close(resolve));
+            await claim.release();
+          }
+          JS
+          node --import ./scripts/tsx.mjs .proof/session-idle-cli.mjs repaired | tee .proof/terminal-summary.log
+          test -s .proof/session-idle/summary.json
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const r=JSON.parse(fs.readFileSync('.proof/session-idle/summary.json','utf8'));
+          assert.equal(r.initialRpcIdleControl,true);
+          assert.equal(r.authoritativeRowIdle,true);
+          assert.equal(r.autonomousIdlePush,true);
+          assert.ok(r.modelRequests>=4);
+          JS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: session-idle-candidate-proof
+          path: .proof/
+          include-hidden-files: true
