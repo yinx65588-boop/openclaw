@@ -1,0 +1,59 @@
+name: PR176119 OpenAI baseline comparison
+on:
+  push:
+    branches: [proof/zsh-openai-comparison-20261022]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  comparison:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: base
+            source: 62fcd8cc13df1dcaad686e915f6b393c48e75607
+          - label: merge
+            source: d78fbf7450bd0619f0d1011a3a30b48931fb53b1
+    env:
+      OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+      OPENCLAW_VITEST_MAX_WORKERS: '2'
+      OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+      OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: H4sIAAAAAAAAA6WW227bMAyG38W5Dd0m6Cl9it0XRcFItCNEEj2KdmoMe/fBTps2W5Ao3pUuxI8Sfx6kl1+F4Vi5OhXPL4VS0pvOfVtKeleKyXGERrhzlgS4oYiu3HOlpuJ1XrhofGvpB6qSxNHZgUw3e+LGknFHrsrxCE3F/IQ1hTVZ62INa1SzOWvrAtYENUUS1KMTsNWp6ETKp4lkK34qmbCm82y09H7WIpB1CG20JEkxjsJnSREosPTwlS602OgliC15MByTSmuGaEoXGhY9L95+AWwcbKkHg4qe6xzEbFDrRsFS5wyBYXtesL8wHuoIKs+7UtqoLlxPTwGzEvDJsKV3sC4Z7kj6HMT2EYMzMGYjBzjcRyg1HBNlpSsrisN4GbUyHFXQaB7yqWwWJYR+sAZsrWNYt1U1DLVdJEkb1+Sx3nU0lGGe9c/WmW1yviMBS57qsX+vZyt0vpXzFXQSrFFph/0+5On4Wpyth+ArMr3xEy7SEAnsWLYXquEknCiNz4eQOqFAMTPRJ3z8BygY0zCp8lx0PIybD+EMx0gmP/dHMHUUL4zHf0Depc+OuoJTkuAieuBWDYcLTX4Ml9wM8aEHg41eKtbUEJlN3oD4sL2q15W3FCFtUIaHKee5OCbyB/cxl1QIwwF4nRfDjn2LGKh4LswGY00WvtzA/jcFi+VDMS/UBRfrty3134zPQrNEnoyywN0Slvi0Wj1VSA+ravbtv1Ct8REfFni3ur+fNSgKC+AKFrOP39vA3hq8f7Tr1eL2bln8fv0Dw5TE5CAKAAA=
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.source }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Capture original ordered openai group and original exit code
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          git rev-parse HEAD > .proof/source.txt
+          set +e
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/original-openai-group.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > .proof/original-exit.txt
+          echo "Original openai test group exit: $result"
+          test -s .proof/original-openai-group.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-openai-comparison-${{ matrix.label }}-20261022
+          path: .proof/
+          include-hidden-files: true
