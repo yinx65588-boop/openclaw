@@ -1,0 +1,78 @@
+name: PR176119 conflict integration native validation
+on:
+  push:
+    branches: [proof/zsh-upstream-runtime-20261023]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+  REVIEWED_HEAD: eb7382ee019cd2866265d6371342d2e4a1cd2153
+jobs:
+  native:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      OPENCLAW_VITEST_RUNTIME: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Verify source and real zsh regression boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin "$REVIEWED_HEAD"
+          git diff --exit-code "$REVIEWED_HEAD" HEAD -- . ':!.github/workflows/pr-maintenance-proof.yml'
+          test -x /bin/zsh
+          sw_vers > .proof/platform.log
+          /bin/zsh --version >> .proof/platform.log
+          node scripts/run-vitest.mjs src/agents/shell-utils.test.ts src/agents/shell-snapshot.test.ts src/agents/bash-tools.exec-host-spawn.test.ts src/agents/bash-tools.exec-runtime.test.ts --maxWorkers=1 2>&1 | tee .proof/native-tests.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-integration-native-20261023
+          path: .proof/
+          include-hidden-files: true
+  owner:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      OPENCLAW_VITEST_RUNTIME: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Verify source and current Levanto owner tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin "$REVIEWED_HEAD"
+          git diff --exit-code "$REVIEWED_HEAD" HEAD -- . ':!.github/workflows/pr-maintenance-proof.yml'
+          node scripts/run-vitest.mjs extensions/levanto/registration.test.ts --maxWorkers=1 2>&1 | tee .proof/levanto-tests.log
+      - name: Check changed owner lint and formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts extensions/levanto/registration.test.ts 2>&1 | tee .proof/lint.log
+          node scripts/run-format.mts --check src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts extensions/levanto/registration.test.ts package.json docs/tools/exec.md 2>&1 | tee .proof/format.log
+          git diff --check "$REVIEWED_HEAD" HEAD
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-integration-owner-20261023
+          path: .proof/
+          include-hidden-files: true
