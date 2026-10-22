@@ -1,0 +1,71 @@
+name: PR176119 current CI failure comparison
+on:
+  push:
+    branches: [proof/zsh-failures-comparison-20261023]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+jobs:
+  comparison:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: gateway-base
+            source: b8fda397d5c9cf31d820666726e1e6899919a78e
+            workers: '8'
+            groups: H4sIAAAAAAAAA9WXW28bNxCF/8v6VZR43Yve0sIPResmSIK6QBAYQ3JWIrzLFUhKthH4vxcryfHK8NqyawPtkyCAZ0ieT2eG+vYjM52v3SJm829ZwphmGzf4mC4g4RXckIhhg2G6WzxNMfs+ydBvsvmP7OOn0z9//ePD+cVfv309/fL14uzD3xfnHz//fvr5SzbPeHY7yZw3zdriJ0gJg9/uFYOZ7YvP9sVXXUjQxGnEGF3np9sD7LaKSwj2wkOL2TyDBfrkDDGdT6FryKoBjySsfXItkpggIVl2MaElIptkybXOLy4u8SabZ2YJfoGWvKTGScQGTeoCYQRzYKisqpRUJwv0GCC5zhPktaW8ViUVcLKCkAgjXU3Yyf7qvdSaHKiUnFKd3U6Odd50AQe+T55c2zj06Z0o7YoTA00T+22nizUE+5PS5HDx3te1I43zlyQgWAzxWabDWxN2NMZD2T0wTmRd8hyEqJCzA2AKIWdUGVmXjwLjBGTJNNaKGi1eAMxCAg0RyVUXLvs7vxJHDU2jwVyewfX5rlI250dkaRse0mKMsECCG/QpTvEa+x97u2owPchW6/zXLkFzhm0Xbn65SRizuaA0l0XBaMGfIbULL3Gxa6BntUfG+LHMRgsMcydZzoqyqm1Vl0OMVlteFKgYNXwkdyVWmFuqtWDVERi3x4sPY/cWQdpVnmGr0do7I/qe4zEQvE4BVhCgjQ8i9ZRsitcJfQ/8RarD5I5lceDEz1Puyz3H9gnpPVVBrKhMrStuSmoOwmltqSWrTWHEo1QFwVppEKXCSqsjqK69SyQG88ZIm6adrUK3cX1zm8UUEFpyFWC16r+3zrsWrkeN3tpzdzIS0ayDSzf3bW80Qs8Kh9GhjNZ5rgC4oEOTC2HRAjWyKtlYdApFDUBuC8Fe0AFbTMvOvqbxyX/T+LZtZL/3rO0sNpHAOi2343z9MCAjulWzXjhPYNVjheYNG+V+hztG8tj++FA3nG6KcuSqFKqS1UGA8kpKbbQSKEemmyzqosSyBsHk/326vfs0O/oBMqYfBrIsuC0rBVyiHEKTmlPKleIGH3+SMFKquqTSGLTqJdD+C4HcjwSLDSYk/Xvk/bJVvjJb5RATE7pWIFlV2XyISYhSABRGCokjmGxFC6mqSqmqPAKT83WAN55M25qzFszSeSS9bU+Pobu/PlsdaV00ZAPNGuOTM2hUNTQyr7hkFmqtazE0knFdGyqUEvbxJsWIspZTpbQuNMtuv/8DwiOiXK8OAAA=
+          - label: gateway-merge
+            source: eb7382ee019cd2866265d6371342d2e4a1cd2153
+            workers: '8'
+            groups: H4sIAAAAAAAAA9WXW28bNxCF/8v6VZR43Yve0sIPResmSIK6QBAYQ3JWIrzLFUhKthH4vxcryfHK8NqyawPtkyCAZ0ieT2eG+vYjM52v3SJm829ZwphmGzf4mC4g4RXckIhhg2G6WzxNMfs+ydBvsvmP7OOn0z9//ePD+cVfv309/fL14uzD3xfnHz//fvr5SzbPeHY7yZw3zdriJ0gJg9/uFYOZ7YvP9sVXXUjQxGnEGF3np9sD7LaKSwj2wkOL2TyDBfrkDDGdT6FryKoBjySsfXItkpggIVl2MaElIptkybXOLy4u8SabZ2YJfoGWvKTGScQGTeoCYQRzYKisqpRUJwv0GCC5zhPktaW8ViUVcLKCkAgjXU3Yyf7qvdSaHKiUnFKd3U6Odd50AQe+T55c2zj06Z0o7YoTA00T+22nizUE+5PS5HDx3te1I43zlyQgWAzxWabDWxN2NMZD2T0wTmRd8hyEqJCzA2AKIWdUGVmXjwLjBGTJNNaKGi1eAMxCAg0RyVUXLvs7vxJHDU2jwVyewfX5rlI250dkaRse0mKMsECCG/QpTvEa+x97u2owPchW6/zXLkFzhm0Xbn65SRizuaA0l0XBaMGfIbULL3Gxa6BntUfG+LHMRgsMcydZzoqyqm1Vl0OMVlteFKgYNXwkdyVWmFuqtWDVERi3x4sPY/cWQdpVnmGr0do7I/qe4zEQvE4BVhCgjQ8i9ZRsitcJfQ/8RarD5I5lceDEz1Puyz3H9gnpPVVBrKhMrStuSmoOwmltqSWrTWHEo1QFwVppEKXCSqsjqK69SyQG88ZIm6adrUK3cX1zm8UUEFpyFWC16r+3zrsWrkeN3tpzdzIS0ayDSzf3bW80Qs8Kh9GhjNZ5rgC4oEOTC2HRAjWyKtlYdApFDUBuC8Fe0AFbTMvOvqbxyX/T+LZtZL/3rO0sNpHAOi2343z9MCAjulWzXjhPYNVjheYNG+V+hztG8tj++FA3nG6KcuSqFKqS1UGA8kpKbbQSKEemmyzqosSyBsHk/326vfs0O/oBMqYfBrIsuC0rBVyiHEKTmlPKleIGH3+SMFKquqTSGLTqJdD+C4HcjwSLDSYk/Xvk/bJVvjJb5RATE7pWIFlV2XyISYhSABRGCokjmGxFC6mqSqmqPAKT83WAN55M25qzFszSeSS9bU+Pobu/PlsdaV00ZAPNGuOTM2hUNTQyr7hkFmqtazE0knFdGyqUEvbxJsWIspZTpbQuNMtuv/8DwiOiXK8OAAA=
+          - label: feishu-base
+            source: b8fda397d5c9cf31d820666726e1e6899919a78e
+            workers: '2'
+            groups: H4sIAAAAAAAAA5WWzW7bMAyA38W5hs6arr9P0XtRFLRE20RkyaWopsGwdx/kpGmxYpN68uX7KIqiRD/+akzwPQ+xuX9slKJuXvnTp6U3JR85eOiJ45jaI95qbJ7WDXvjkqUHVCXxS4yzEDdHYxPFbNCYkLzGdgmqsVn/C5xnEBo4qqBy8GUhHrwpUl1Q6CSgNRi1ddyTORhHVd4gIc3gcarC26zoKIS2vNuFP6clISn7ocoyKBbQVJXIjOg9uRpOy5Bj8trm/QEmHYOwHmqtIhamibyC5TijmpGkWhnRW1fF5/6FaEaasEhbcvxKcgAVNOXztyxkNEi5IHaCc2wXwtyh2ZWlYN6ARIJ801HsHJ3apdyVWSlDwq8Ep+rHb+STvSI1kWUEMya/A7YVF/Uo2LD3LqCtwyuoGHHIu/Sae6x6k1PwrEHaU3mq+fcF35vZUheSNwRzcGzKXfUeZ0/dGMIOal+UkDQvVK5bZR6zUCSvywsO+akqGkKzO3y+91Ow5GCPXK7eFzeqEE7sB8in5UK5AF9ClIRIRkiXzhA05RwjeQtCMbk6tj1m1KNzVR23OGXoJZFXRgcviVL5VkXSNENM0te8fh9lrzry45CEjr1lP8R2dmng8jT7Wyvxe97xGXpaN3FEsc95nDf3TR6NA1n4UOE0ILbbZt0o5+087+jwif2fs4rklgkAP6/B3tkr+nHT3RHdrgbydPylga7vtledubzG/nY1oyhcQOjhYnX6ncrujenM5eVFh9vbu+b30x8yaziJqAkAAA==
+          - label: feishu-merge
+            source: eb7382ee019cd2866265d6371342d2e4a1cd2153
+            workers: '2'
+            groups: H4sIAAAAAAAAA5WWzW7bMAyA38W5hs6arr9P0XtRFLRE20RkyaWopsGwdx/kpGmxYpN68uX7KIqiRD/+akzwPQ+xuX9slKJuXvnTp6U3JR85eOiJ45jaI95qbJ7WDXvjkqUHVCXxS4yzEDdHYxPFbNCYkLzGdgmqsVn/C5xnEBo4qqBy8GUhHrwpUl1Q6CSgNRi1ddyTORhHVd4gIc3gcarC26zoKIS2vNuFP6clISn7ocoyKBbQVJXIjOg9uRpOy5Bj8trm/QEmHYOwHmqtIhamibyC5TijmpGkWhnRW1fF5/6FaEaasEhbcvxKcgAVNOXztyxkNEi5IHaCc2wXwtyh2ZWlYN6ARIJ801HsHJ3apdyVWSlDwq8Ep+rHb+STvSI1kWUEMya/A7YVF/Uo2LD3LqCtwyuoGHHIu/Sae6x6k1PwrEHaU3mq+fcF35vZUheSNwRzcGzKXfUeZ0/dGMIOal+UkDQvVK5bZR6zUCSvywsO+akqGkKzO3y+91Ow5GCPXK7eFzeqEE7sB8in5UK5AF9ClIRIRkiXzhA05RwjeQtCMbk6tj1m1KNzVR23OGXoJZFXRgcviVL5VkXSNENM0te8fh9lrzry45CEjr1lP8R2dmng8jT7Wyvxe97xGXpaN3FEsc95nDf3TR6NA1n4UOE0ILbbZt0o5+087+jwif2fs4rklgkAP6/B3tkr+nHT3RHdrgbydPylga7vtledubzG/nY1oyhcQOjhYnX6ncrujenM5eVFh9vbu+b30x8yaziJqAkAAA==
+    env:
+      OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+      OPENCLAW_VITEST_MAX_WORKERS: ${{ matrix.workers }}
+      OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+      OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: ${{ matrix.groups }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.source }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Capture original ordered failing CI group and original exit code
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          git rev-parse HEAD > .proof/source.txt
+          set +e
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/original-group.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > .proof/original-exit.txt
+          echo "Original test group exit: $result"
+          test -s .proof/original-group.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-failure-comparison-${{ matrix.label }}-20261023
+          path: .proof/
+          include-hidden-files: true
