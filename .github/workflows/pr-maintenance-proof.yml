@@ -1,0 +1,59 @@
+name: PR176119 Feishu baseline comparison
+on:
+  push:
+    branches: [proof/zsh-feishu-comparison-20261022]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  comparison:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: base
+            source: c90d1bd58bf47a0170de86194a0a84b547e1ec12
+          - label: merge
+            source: e8a4a8905ca3c95429c89f117d14e6203b20767f
+    env:
+      OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+      OPENCLAW_VITEST_MAX_WORKERS: '2'
+      OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+      OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: H4sIAAAAAAAAA5WWwW7bMAxA/8W5hk7Spcnar+i9KApaom0hsuhSVNNg2L8PdtK0WLFJPfnyHiVRFOnHX5Xh0LouVvePlVLU1av79KnpTSlExwFacrFP9RmvNVZPy8oF45OlB1QlCXOMqxBXZ2MVxazQGE5BYz0H1Vgt/wWOIwh1LqqgOg55IZ6CyVINKzTCaA1Grb1ryZyMpyKvE04jBByK8HpStBdCmz/tzF+3JZzUha7IMigW0BSlyPQYAvkSTvOQdxS0ns4HmLRncXoqtbIYDwMFBeviiGp6kmKlx2B9ET/VL0TT04BZ2pJ3ryQnUEGTv3/rhIyy5BNiB7jG9sxjg+aQl9i8AYmwfNNRbDxdyiVflZOSh8S9ElyyH7+xn8nLUgNZh2D6FA7gbMFDPQuWj8Ez2jK8gIoRu+mUQacaKz7kwMEpS31JTzH/vuB7MVtqOAVDMLJ3Jl9V73GO1PTMByjtKJx0Wiift8J9jEKRgs4dHKZWlTWERn/6/O4HtuThiC6fvS9uVCEcXOhgui3P+QR8CZETIhkhnStD0OT3GClYEIrJl7H1eUctel9UcbOTh14SBXXo4SVRyr+qSJpGiEnaku73kfaiK4+pwW5u3cyHfFc6z1RoXLAudLEefepcfvj9reX4ozu4K/S0rGKPYp+n6V/dV9Mk7cjChwqXeXKzrZaVuun0zwc6fWL/5ywi+XlgwHYPaHbrm+1+vdm0+0VHgc5/QIDr9X5jftyZ7e3NYkRR2AC3sFlc/r4mt92Z27uftGt3+7vq99MfsoekDdcJAAA=
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.source }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Capture original ordered feishu group and original exit code
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          git rev-parse HEAD > .proof/source.txt
+          set +e
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/original-feishu-group.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > .proof/original-exit.txt
+          echo "Original feishu test group exit: $result"
+          test -s .proof/original-feishu-group.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-feishu-comparison-${{ matrix.label }}-20261022
+          path: .proof/
+          include-hidden-files: true
