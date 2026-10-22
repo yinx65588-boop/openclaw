@@ -1,0 +1,47 @@
+name: Agents API cron cleanup baseline reproduction
+on:
+  push:
+    branches: [proof/agentsapi-cron-baseline-20261023]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+jobs:
+  regression:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 4f39309c731d181adbabe9db8043997d9866a299
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Apply regression only, preserve production baseline
+        run: |
+          mkdir -p .proof
+          printf '%s' 'ZGlmZiAtLWdpdCBhL3NyYy9jcm9uL2lzb2xhdGVkLWFnZW50L3J1bi5zZXNzaW9uLWtleS1pc29sYXRpb24udGVzdC50cyBiL3NyYy9jcm9uL2lzb2xhdGVkLWFnZW50L3J1bi5zZXNzaW9uLWtleS1pc29sYXRpb24udGVzdC50cw0KaW5kZXggZGU3MTUwNTA1Zi4uN2I3MjlhYTQ3YiAxMDA2NDQNCi0tLSBhL3NyYy9jcm9uL2lzb2xhdGVkLWFnZW50L3J1bi5zZXNzaW9uLWtleS1pc29sYXRpb24udGVzdC50cw0KKysrIGIvc3JjL2Nyb24vaXNvbGF0ZWQtYWdlbnQvcnVuLnNlc3Npb24ta2V5LWlzb2xhdGlvbi50ZXN0LnRzDQpAQCAtMSw2ICsxLDcgQEANCiBpbXBvcnQgeyBjcmVhdGVSZXF1aXJlUmVjb3JkIH0gZnJvbSAib3BlbmNsYXcvcGx1Z2luLXNkay90ZXN0LWZpeHR1cmVzIjsNCi1pbXBvcnQgeyBhc3NlcnQsIGRlc2NyaWJlLCBleHBlY3QsIGl0IH0gZnJvbSAidml0ZXN0IjsNCitpbXBvcnQgeyBhc3NlcnQsIGRlc2NyaWJlLCBleHBlY3QsIGl0LCB2aSB9IGZyb20gInZpdGVzdCI7DQogaW1wb3J0IHsgY3JlYXRlRGVmZXJyZWQgfSBmcm9tICIuLi8uLi8uLi90ZXN0L2hlbHBlcnMvcHJvbWlzZS5qcyI7DQoraW1wb3J0IHsgYWJvcnRBbmREcmFpbkVtYmVkZGVkQWdlbnRSdW4gfSBmcm9tICIuLi8uLi9hZ2VudHMvZW1iZWRkZWQtYWdlbnQtcnVubmVyL3J1bnMuanMiOw0KIGltcG9ydCB7IHJ1bkluaXRpYWxNb2RlbEZhbGxiYWNrQXR0ZW1wdCB9IGZyb20gIi4uLy4uL2FnZW50cy90ZXN0LWhlbHBlcnMvbW9kZWwtZmFsbGJhY2stcnVubmVyLnRlc3Qtc3VwcG9ydC5qcyI7DQogaW1wb3J0IHsgaXNTZXNzaW9uQ29udHJvbGxlcldvcmtBY3RpdmUgfSBmcm9tICIuLi8uLi9zZXNzaW9ucy9zZXNzaW9uLWNvbnRyb2xsZXIubGlmZWN5Y2xlLmpzIjsNCiBpbXBvcnQgeyBtb2NrQ2FsbCB9IGZyb20gIi4uLy4uL3Rlc3QtdXRpbHMvbW9jay1jYWxsLWFzc2VydGlvbnMuanMiOw0KQEAgLTQzLDYgKzQ0LDI3IEBAIGZ1bmN0aW9uIHNlc3Npb25UYXJnZXQoc2Vzc2lvbklkOiBzdHJpbmcsIHNlc3Npb25LZXk/OiBzdHJpbmcsIHN0b3JlUGF0aCA9ICIvdG1wDQogZGVzY3JpYmUoInJ1bkNyb25Jc29sYXRlZEFnZW50VHVybiBpc29sYXRlZCBzZXNzaW9uIGlkZW50aXR5IiwgKCkgPT4gew0KICAgc2V0dXBSdW5Dcm9uSXNvbGF0ZWRBZ2VudFR1cm5TdWl0ZSh7IGZhc3Q6IHRydWUgfSk7DQogDQorICBpdCgiZmluaXNoZXMgaXRzIHR1cm4gYmVmb3JlIG5hdGl2ZSBjb250aW51YXRpb24gY2xlYW51cCBkcmFpbnMgdGhlIHNlc3Npb24iLCBhc3luYyAoKSA9PiB7DQorICAgIGgubW9ja1J1bkNyb25GYWxsYmFja1Bhc3N0aHJvdWdoKCk7DQorICAgIGxldCBkcmFpbmVkOiBBd2FpdGVkPFJldHVyblR5cGU8dHlwZW9mIGFib3J0QW5kRHJhaW5FbWJlZGRlZEFnZW50UnVuPj4gfCB1bmRlZmluZWQ7DQorICAgIGgucmVtb3ZlQ3JvblJ1bkNvbnRpbnVhdGlvblNlc3Npb25JZklkbGVNb2NrLm1vY2tJbXBsZW1lbnRhdGlvbihhc3luYyAoc2Vzc2lvbktleSkgPT4gew0KKyAgICAgIGNvbnN0IHNlc3Npb25JZCA9IHNlc3Npb25LZXkuc2xpY2Uoc2Vzc2lvbktleS5sYXN0SW5kZXhPZigiOnJ1bjoiKSArIDUpOw0KKyAgICAgIHZpLnVzZUZha2VUaW1lcnMoKTsNCisgICAgICB0cnkgew0KKyAgICAgICAgY29uc3QgY2xlYW51cCA9IGFib3J0QW5kRHJhaW5FbWJlZGRlZEFnZW50UnVuKHsgc2Vzc2lvbklkLCBzZXR0bGVNczogMTAwIH0pOw0KKyAgICAgICAgYXdhaXQgdmkuYWR2YW5jZVRpbWVyc0J5VGltZUFzeW5jKDEwMCk7DQorICAgICAgICBkcmFpbmVkID0gYXdhaXQgY2xlYW51cDsNCisgICAgICB9IGZpbmFsbHkgew0KKyAgICAgICAgdmkudXNlUmVhbFRpbWVycygpOw0KKyAgICAgIH0NCisgICAgfSk7DQorDQorICAgIGNvbnN0IHJlc3VsdCA9IGF3YWl0IHJ1bkpvYigpOw0KKw0KKyAgICBleHBlY3QocmVzdWx0LnN0YXR1cykudG9CZSgib2siKTsNCisgICAgZXhwZWN0KGRyYWluZWQpLnRvTWF0Y2hPYmplY3QoeyBhYm9ydGVkOiBmYWxzZSwgZHJhaW5lZDogdHJ1ZSB9KTsNCisgIH0pOw0KKw0KICAgaXQoImlzb2xhdGVzIHJ1biBpZGVudGl0aWVzIHdoaWxlIHJldGFpbmluZyBqb2ItbGV2ZWwgcHJvbXB0LWNhY2hlIGFmZmluaXR5IiwgYXN5bmMgKCkgPT4gew0KICAgICBjb25zdCBiYXNlS2V5ID0gImFnZW50OmRlZmF1bHQ6Y3JvbjpkYWlseS1tb25pdG9yIjsNCiAgICAgY29uc3QgZmlyc3RTZXNzaW9uID0gbWFrZVNlc3Npb24oeyBzZXNzaW9uSWQ6ICJydW4tYSIgfSk7DQo=' | base64 -d > .proof/regression.patch
+          git apply --check .proof/regression.patch
+          git apply .proof/regression.patch
+      - name: Reproduce exact cron completion owner drain
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          node scripts/run-vitest.mjs src/cron/isolated-agent/run.session-key-isolation.test.ts --maxWorkers=1 -t 'finishes its turn before native continuation cleanup' 2>&1 | tee .proof/test.log
+          result=${PIPESTATUS[0]}
+          printf '%s\n' "$result" > .proof/exit-code.txt
+          exit "$result"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: agentsapi-cron-baseline
+          path: .proof/
+          include-hidden-files: true
