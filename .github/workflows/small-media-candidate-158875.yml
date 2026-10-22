@@ -1,0 +1,55 @@
+name: Media fallback attribution focused validation
+on:
+  push:
+    branches: [proof/small-media-candidate-158875-20261023]
+permissions:
+  contents: read
+jobs:
+  focused:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Run media owners and all three tool consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/source.txt
+          /usr/bin/time -p -o .proof/tests-time.txt pnpm test src/agents/tools/video-generate-tool.test.ts src/agents/tools/video-generate-tool.storage.test.ts src/agents/tools/image-generate-tool.test.ts src/agents/tools/image-generate-tool.auth.test.ts src/agents/tools/music-generate-tool.test.ts src/agents/tools/music-generate-tool.status.test.ts src/agents/tools/media-generate-background-shared.test.ts src/agents/tools/media-generate-background.test.ts src/agents/media-generation-activity.test.ts src/agents/media-generation-task-status-shared.test.ts src/agents/media-generation-task-status.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/focused-tests.json > .proof/focused-tests.log 2>&1
+          cat .proof/tests-time.txt
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const report = JSON.parse(fs.readFileSync('.proof/focused-tests.json', 'utf8'));
+          assert.equal(report.numFailedTests, 0);
+          const regression = report.testResults.flatMap(f => f.assertionResults).find(t => t.fullName.includes('attributes a detached fallback result'));
+          assert.equal(regression?.status, 'passed');
+          console.log(JSON.stringify({passed: report.numPassedTests, failed: report.numFailedTests, suites: report.numTotalTestSuites}));
+          JS
+      - name: Check types, lint and format
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(src/agents/media-generation-activity.ts src/agents/media-generation-task-status-shared.ts src/agents/tools/media-generate-background-shared.ts src/agents/tools/image-generate-tool.ts src/agents/tools/music-generate-tool.ts src/agents/tools/video-generate-tool.ts src/agents/tools/video-generate-tool.test.ts)
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 "${files[@]}" 2>&1 | tee .proof/lint.log
+          pnpm exec oxfmt --threads=1 --check "${files[@]}" 2>&1 | tee .proof/format.log
+          node scripts/run-tsgo.mjs -p test/tsconfig/tsconfig.core.test.agents-tools.json 2>&1 | tee .proof/types.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: media-attribution-focused
+          path: .proof/
+          include-hidden-files: true
