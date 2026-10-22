@@ -1,0 +1,55 @@
+name: PR176119 Feishu observer diagnosis
+on:
+  push:
+    branches: [proof/zsh-feishu-observer-20261023]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  OPENCLAW_VITEST_RUNTIME: bun
+jobs:
+  eager-writer:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: eb7382ee019cd2866265d6371342d2e4a1cd2153
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Force the server producer ahead without changing the bounded reader
+        run: |
+          mkdir -p .proof
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('extensions/feishu/src/http.test-support.ts')
+          source = path.read_text()
+          old = 'const chunk = Buffer.alloc(1024 * 1024, 0x20);'
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, 'const chunk = Buffer.alloc(totalBytes, 0x20);'))
+          PY
+          git diff > .proof/diagnostic.patch
+      - name: Capture the actual cancellation observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          node scripts/run-vitest.mjs extensions/feishu/src/app-registration.test.ts extensions/feishu/src/streaming-card.test.ts --maxWorkers=1 --testNamePattern='rejects Feishu API responses that exceed|rejects oversized streaming' 2>&1 | tee .proof/test.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > .proof/actual-exit.txt
+          test "$result" -ne 0
+          grep -q 'expected false to be true' .proof/test.log
+          grep -q '3 failed' .proof/test.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: feishu-eager-writer-observations-20261023
+          path: .proof/
+          include-hidden-files: true
