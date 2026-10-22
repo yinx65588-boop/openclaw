@@ -1,0 +1,147 @@
+name: PR176119 browser baseline comparison and format repair
+on:
+  push:
+    branches: [proof/zsh-browser-comparison-20261022]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+jobs:
+  comparison:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: base
+            source: 2e7bc82ad3d0ba1150514d79d771fab056988916
+          - label: merge
+            source: a5d1ddd2bc793c0717738d0913ceaf5024c64bee
+    env:
+      OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+      OPENCLAW_VITEST_MAX_WORKERS: '2'
+      OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+      OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: H4sIAAAAAAAAA7WX227iMBCG3yXcYgdKWUGfYu+rqhrswbFwxpE9IUSrffdVDoVqDzQG9gpFzPc7M2P/47z+yJSnvTUxe3nNGCPnR/vpR+KJkaL1JHbBNxGDHOIlx+xtnllSrtb4HZgxUC9yJmI+Irkqgi9RnP/Jd6AOJviatASlMEZReo2yX5FjNk8VUQGBu5d0do+qVe4OraugJY2n6yGVq40lEdDYyKF/LRkx9jUckr2BL2rWvqHrZAwqB2ZQBeqPdgn23olQE9vyi6J0+AdFXqOogj+105k+XNSV89C1le0RRePD4UaFyVSXoYyqwBISoanROSgWlXdWTS9HrnQ1JrRrK/iq67+RskBXYUiEpgcP+79UlVCeCBXfwkrlEKi+ad2bmONSVIghlZUa91A7PltYMm/BkI9sVZQcgGLlQ3LFZIGgXed1N5ZNWupMFhL2rXIWicUeWRVysAbhybUSn6abwaiSED9OiKnxlxlD0LtG4WPCchc8oIM2N8DYQDs8CUsmdJ7bFc+Mdvog6eBrxv8nfLOYbwiDgJoLkdq6v0uNHtFl+JBsB9WI4ZhyGH9XqQL2OTa4i14dkIWpIUwfHH8IDsXfec/d4K0ek+soGqw2KIeD+BitO1WUx5ONjKQwzQ2+lntg3R5SsNTbzz9kxv3a77nj071qDMEgJwz4i0xEru/enY0l7ZsoSiAwWCa5BMHRmuHCnXjkKuAiIecq+L11GPvaW5XQwuHm1cNn6G2exQKCficoMXvJVAFkUF8+A6IYRpdYrrJ5xra0ZN4P2H6KvcbMIjpU7INYLrZirdd7hRr0Fp9nBgmHXonn5Wb5rPXTdrH9NqsgsFgKvxer2fgtJdYLsd1uVriB9Wq3WWQ/334BGnAtOaYNAAA=
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.source }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Capture original ordered browser group and original exit code
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          git rev-parse HEAD > .proof/source.txt
+          set +e
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/original-browser-group.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > .proof/original-exit.txt
+          echo "Original browser test group exit: $result"
+          test -s .proof/original-browser-group.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-browser-comparison-${{ matrix.label }}-20261022
+          path: .proof/
+          include-hidden-files: true
+  format:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: e94cea3e38d74d8aa0e3fe4f6c0420009b0c092b
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Validate the whitespace-only owner correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > src/agents/bash-tools.exec-host-spawn.test.ts <<'SOURCE'
+          import assert from "node:assert/strict";
+          import { spawnSync } from "node:child_process";
+          import fs from "node:fs";
+          import path from "node:path";
+          import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+          import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+          import { prepareHostExecSpawn } from "./bash-tools.exec-host-spawn.js";
+          
+          const zsh = "/bin/zsh";
+          const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+          
+          describe.runIf(process.platform !== "win32" && fs.existsSync(zsh))("zsh host exec", () => {
+            let cwd: string;
+            let env: Record<string, string>;
+          
+            beforeEach(() => {
+              cwd = tempDirs.make("openclaw-zsh-exec-");
+              env = { PATH: "/usr/bin:/bin", HOME: cwd, ZDOTDIR: cwd, SHELL: zsh };
+              vi.stubEnv("SHELL", zsh);
+              vi.stubEnv("OPENCLAW_EXEC_SHELL_SNAPSHOT", "0");
+            });
+          
+            afterEach(() => vi.unstubAllEnvs());
+          
+            it.each([
+              ["echo before; echo ===; echo after", "before\n===\nafter\n"],
+              ["echo before; echo no-such-file-*.txt; echo after", "before\nno-such-file-*.txt\nafter\n"],
+            ])("finishes a command chain containing literal shell text: %s", async (command, stdout) => {
+              const prepared = await prepareHostExecSpawn({ command, workdir: cwd, env, usePty: false });
+          
+              assert(prepared.argv[0], "exec must provide a shell executable");
+              const result = spawnSync(prepared.argv[0], prepared.argv.slice(1), {
+                cwd,
+                env,
+                encoding: "utf8",
+              });
+              expect(result.error).toBeUndefined();
+              expect(result.status).toBe(0);
+              expect(result.stdout).toBe(stdout);
+              expect(result.stderr).toBe("");
+            });
+          
+            it("keeps startup suppression and ordinary tilde, brace, and glob expansion", async () => {
+              fs.writeFileSync(path.join(cwd, "match-one.txt"), "");
+              const command = "printf '%s\\n' $options[rcs] ~ {one,two} match-*.txt";
+              const prepared = await prepareHostExecSpawn({ command, workdir: cwd, env, usePty: false });
+              assert(prepared.argv[0], "exec must provide a shell executable");
+              const result = spawnSync(prepared.argv[0], prepared.argv.slice(1), {
+                cwd,
+                env,
+                encoding: "utf8",
+              });
+              expect(result.error).toBeUndefined();
+              expect(result.status).toBe(0);
+              expect(result.stdout).toBe(`off\n${cwd}\none\ntwo\nmatch-one.txt\n`);
+              expect(result.stderr).toBe("");
+            });
+          });
+          SOURCE
+          mkdir -p .proof
+          git diff --exit-code --ignore-blank-lines -- src/agents/bash-tools.exec-host-spawn.test.ts
+          git diff --check
+          node scripts/run-format.mts --check src/agents/shell-utils.ts src/agents/shell-utils.test.ts src/agents/bash-tools.exec-host-spawn.test.ts extensions/levanto/registration.test.ts package.json docs/tools/exec.md 2>&1 | tee .proof/format.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-format-repair-20261022
+          path: .proof/
+          include-hidden-files: true
