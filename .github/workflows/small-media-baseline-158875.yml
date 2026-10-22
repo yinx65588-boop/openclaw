@@ -1,0 +1,53 @@
+name: Media fallback attribution baseline
+on:
+  push:
+    branches: [proof/small-media-baseline-158875-20261023]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Capture the failing production-entry regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/source.txt
+          set +e
+          /usr/bin/time -p -o .proof/baseline-time.txt pnpm test src/agents/tools/video-generate-tool.test.ts --maxWorkers=1 -t 'attributes a detached fallback result' --reporter=json --outputFile=.proof/baseline-tests.json > .proof/baseline-tests.log 2>&1
+          result=$?
+          set -e
+          printf '%s\n' "$result" > .proof/baseline-exit.txt
+          cat .proof/baseline-tests.log
+          test "$result" -eq 1
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const report = JSON.parse(fs.readFileSync('.proof/baseline-tests.json', 'utf8'));
+          assert.equal(report.numFailedTests, 1);
+          const test = report.testResults.flatMap(f => f.assertionResults).find(t => t.status === 'failed');
+          assert.ok(test.fullName.includes('attributes a detached fallback result'));
+          assert.ok(test.failureMessages.join('\n').includes('qa-primary'));
+          assert.ok(test.failureMessages.join('\n').includes('qa-fallback'));
+          console.log('Baseline fails on successful-provider attribution, not setup.');
+          JS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: media-attribution-baseline
+          path: .proof/
+          include-hidden-files: true
