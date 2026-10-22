@@ -1,0 +1,100 @@
+name: PR176119 CI fixture repair validation
+on:
+  push:
+    branches: [proof/zsh-ci-fixtures-candidate-20261023]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  OPENCLAW_VITEST_RUNTIME: bun
+jobs:
+  validation:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [owner, no-cap, no-cancel, types]
+    env:
+      VARIANT: ${{ matrix.variant }}
+      OPENCLAW_VITEST_MAX_WORKERS: '2'
+      OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: eb7382ee019cd2866265d6371342d2e4a1cd2153
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Apply reviewed candidate
+        run: |
+          mkdir -p .proof
+          printf '%s' 'ZGlmZiAtLWdpdCBhL2V4dGVuc2lvbnMvZmVpc2h1L3NyYy9hcHAtcmVnaXN0cmF0aW9uLnRlc3QudHMgYi9leHRlbnNpb25zL2ZlaXNodS9zcmMvYXBwLXJlZ2lzdHJhdGlvbi50ZXN0LnRzCmluZGV4IDk3NDNhYzRjMjYuLjhmMzAwZTA4YzkgMTAwNjQ0Ci0tLSBhL2V4dGVuc2lvbnMvZmVpc2h1L3NyYy9hcHAtcmVnaXN0cmF0aW9uLnRlc3QudHMKKysrIGIvZXh0ZW5zaW9ucy9mZWlzaHUvc3JjL2FwcC1yZWdpc3RyYXRpb24udGVzdC50cwpAQCAtNSw3ICs1LDExIEBAIGltcG9ydCB0eXBlIHsgTG9va3VwRm4gfSBmcm9tICJvcGVuY2xhdy9wbHVnaW4tc2RrL3NzcmYtcnVudGltZSI7CiBpbXBvcnQgeyB3aXRoRmV0Y2hQcmVjb25uZWN0LCB3aXRoU2VydmVyIH0gZnJvbSAib3BlbmNsYXcvcGx1Z2luLXNkay90ZXN0LWVudiI7CiBpbXBvcnQgeyBhZnRlckVhY2gsIGRlc2NyaWJlLCBleHBlY3QsIGl0LCB2aSB9IGZyb20gInZpdGVzdCI7CiBpbXBvcnQgeyBiZWdpbkFwcFJlZ2lzdHJhdGlvbiwgcG9sbEFwcFJlZ2lzdHJhdGlvbiwgcHJpbnRRckNvZGUgfSBmcm9tICIuL2FwcC1yZWdpc3RyYXRpb24uanMiOwotaW1wb3J0IHsgcmVhZFJlcXVlc3RCb2R5LCBzdHJpcERpc3BhdGNoZXIsIHdyaXRlT3ZlcnNpemVkSnNvbiB9IGZyb20gIi4vaHR0cC50ZXN0LXN1cHBvcnQuanMiOworaW1wb3J0IHsKKyAgY3JlYXRlT3ZlcnNpemVkSnNvblJlc3BvbnNlLAorICByZWFkUmVxdWVzdEJvZHksCisgIHN0cmlwRGlzcGF0Y2hlciwKK30gZnJvbSAiLi9odHRwLnRlc3Qtc3VwcG9ydC5qcyI7CiAKIGNvbnN0IEZFSVNIVV9KU09OX01BWF9CWVRFUyA9IDE2ICogMTAyNCAqIDEwMjQ7CiAKQEAgLTE4MiwyNCArMTg2LDE5IEBAIGRlc2NyaWJlKCJGZWlzaHUgYXBwIHJlZ2lzdHJhdGlvbiIsICgpID0+IHsKICAgfSk7CiAKICAgaXQoInJlamVjdHMgRmVpc2h1IEFQSSByZXNwb25zZXMgdGhhdCBleGNlZWQgdGhlIDE2IE1pQiBKU09OIGJvZHkgY2FwIiwgYXN5bmMgKCkgPT4gewotICAgIGxldCBzdHJlYW1TdGF0ZTogUmV0dXJuVHlwZTx0eXBlb2Ygd3JpdGVPdmVyc2l6ZWRKc29uPiB8IHVuZGVmaW5lZDsKLSAgICBhd2FpdCB3aXRoUmVnaXN0cmF0aW9uU2VydmVyKAotICAgICAgKF9yZXEsIHJlcykgPT4gewotICAgICAgICBzdHJlYW1TdGF0ZSA9IHdyaXRlT3ZlcnNpemVkSnNvbigKLSAgICAgICAgICByZXMsCi0gICAgICAgICAgRkVJU0hVX0pTT05fTUFYX0JZVEVTICogMiwKLSAgICAgICAgICAneyJkZXZpY2VfY29kZSI6ImRldiIsInBhZGRpbmciOiInLAotICAgICAgICApOwotICAgICAgfSwKLSAgICAgIGFzeW5jICgpID0+IHsKLSAgICAgICAgYXdhaXQgZXhwZWN0KGJlZ2luQXBwUmVnaXN0cmF0aW9uKCJmZWlzaHUiKSkucmVqZWN0cy50b1Rocm93KAotICAgICAgICAgIC9mZWlzaHVcLmFwaTogSlNPTiByZXNwb25zZSBleGNlZWRzIFxkKyBieXRlcy8sCi0gICAgICAgICk7Ci0gICAgICB9LAorICAgIGNvbnN0IHN0cmVhbVN0YXRlID0gY3JlYXRlT3ZlcnNpemVkSnNvblJlc3BvbnNlKAorICAgICAgRkVJU0hVX0pTT05fTUFYX0JZVEVTICogMiwKKyAgICAgICd7ImRldmljZV9jb2RlIjoiZGV2IiwicGFkZGluZyI6IicsCisgICAgKTsKKyAgICBtb2NrUmVnaXN0cmF0aW9uRmV0Y2goeworICAgICAgZmV0Y2hJbXBsOiB3aXRoRmV0Y2hQcmVjb25uZWN0KGFzeW5jICgpID0+IHN0cmVhbVN0YXRlLnJlc3BvbnNlKSwKKyAgICB9KTsKKyAgICBhd2FpdCBleHBlY3QoYmVnaW5BcHBSZWdpc3RyYXRpb24oImZlaXNodSIpKS5yZWplY3RzLnRvVGhyb3coCisgICAgICAvZmVpc2h1XC5hcGk6IEpTT04gcmVzcG9uc2UgZXhjZWVkcyBcZCsgYnl0ZXMvLAogICAgICk7CiAKLSAgICBleHBlY3Qoc3RyZWFtU3RhdGU/LmNhbmNlbGVkKCkpLnRvQmUodHJ1ZSk7Ci0gICAgZXhwZWN0KHN0cmVhbVN0YXRlPy5ieXRlc1B1bGxlZCgpKS50b0JlTGVzc1RoYW4oRkVJU0hVX0pTT05fTUFYX0JZVEVTICogMik7CisgICAgZXhwZWN0KHN0cmVhbVN0YXRlLmNhbmNlbGVkKCkpLnRvQmUodHJ1ZSk7CisgICAgZXhwZWN0KHN0cmVhbVN0YXRlLmJ5dGVzUHVsbGVkKCkpLnRvQmVMZXNzVGhhbihGRUlTSFVfSlNPTl9NQVhfQllURVMgKiAyKTsKICAgfSk7CiAKICAgaXQoInNlbmRzIGJvdW5kIHJlYWRzIHRocm91Z2ggdGhlIHJlYWwgU1NSRiBndWFyZCBiZWZvcmUgbG9jYWwgc29ja2V0IHJlZGlyZWN0IiwgYXN5bmMgKCkgPT4gewpkaWZmIC0tZ2l0IGEvZXh0ZW5zaW9ucy9mZWlzaHUvc3JjL2h0dHAudGVzdC1zdXBwb3J0LnRzIGIvZXh0ZW5zaW9ucy9mZWlzaHUvc3JjL2h0dHAudGVzdC1zdXBwb3J0LnRzCmluZGV4IGE2MDkwOTQ4NWIuLjRhYWQwZGU0MzQgMTAwNjQ0Ci0tLSBhL2V4dGVuc2lvbnMvZmVpc2h1L3NyYy9odHRwLnRlc3Qtc3VwcG9ydC50cworKysgYi9leHRlbnNpb25zL2ZlaXNodS9zcmMvaHR0cC50ZXN0LXN1cHBvcnQudHMKQEAgLTEsNCArMSw0IEBACi1pbXBvcnQgdHlwZSB7IEluY29taW5nTWVzc2FnZSwgU2VydmVyUmVzcG9uc2UgfSBmcm9tICJub2RlOmh0dHAiOworaW1wb3J0IHR5cGUgeyBJbmNvbWluZ01lc3NhZ2UgfSBmcm9tICJub2RlOmh0dHAiOwogCiB0eXBlIERpc3BhdGNoZXJJbml0ID0gUmVxdWVzdEluaXQgJiB7IGRpc3BhdGNoZXI/OiB1bmtub3duIH07CiAKQEAgLTE4LDQ1ICsxOCwzNSBAQCBleHBvcnQgZnVuY3Rpb24gc3RyaXBEaXNwYXRjaGVyKGluaXQ6IFJlcXVlc3RJbml0IHwgdW5kZWZpbmVkKTogUmVxdWVzdEluaXQgfCB1bgogICByZXR1cm4gcmVzdDsKIH0KIAotZXhwb3J0IGZ1bmN0aW9uIHdyaXRlT3ZlcnNpemVkSnNvbigKLSAgcmVzOiBTZXJ2ZXJSZXNwb25zZSwKK2V4cG9ydCBmdW5jdGlvbiBjcmVhdGVPdmVyc2l6ZWRKc29uUmVzcG9uc2UoCiAgIHRvdGFsQnl0ZXM6IG51bWJlciwKICAganNvblByZWZpeDogc3RyaW5nLAotKTogeyBieXRlc1B1bGxlZDogKCkgPT4gbnVtYmVyOyBjYW5jZWxlZDogKCkgPT4gYm9vbGVhbiB9IHsKKykgewogICBjb25zdCBjaHVuayA9IEJ1ZmZlci5hbGxvYygxMDI0ICogMTAyNCwgMHgyMCk7CiAgIGxldCBieXRlc1B1bGxlZCA9IDA7CiAgIGxldCBjYW5jZWxlZCA9IGZhbHNlOwotICBsZXQgZW5kZWQgPSBmYWxzZTsKLSAgcmVzLndyaXRlSGVhZCgyMDAsIHsgImNvbnRlbnQtdHlwZSI6ICJhcHBsaWNhdGlvbi9qc29uIiB9KTsKLSAgcmVzLm9uKCJjbG9zZSIsICgpID0+IHsKLSAgICBpZiAoIWVuZGVkICYmIGJ5dGVzUHVsbGVkIDwgdG90YWxCeXRlcykgeworICAvLyBPYnNlcnZlIHRoZSByZWFkZXIncyBwdWxscyBhbmQgY2FuY2VsbGF0aW9uLCBpbmRlcGVuZGVudCBvZiBUQ1AgYnVmZmVyaW5nLgorICBjb25zdCBib2R5ID0gbmV3IFJlYWRhYmxlU3RyZWFtPFVpbnQ4QXJyYXk+KHsKKyAgICBwdWxsKGNvbnRyb2xsZXIpIHsKKyAgICAgIGlmIChieXRlc1B1bGxlZCA+PSB0b3RhbEJ5dGVzKSB7CisgICAgICAgIGNvbnRyb2xsZXIuZW5xdWV1ZShCdWZmZXIuZnJvbSgnIn0nKSk7CisgICAgICAgIGNvbnRyb2xsZXIuY2xvc2UoKTsKKyAgICAgICAgcmV0dXJuOworICAgICAgfQorICAgICAgY29uc3QgbmV4dCA9CisgICAgICAgIGJ5dGVzUHVsbGVkID09PSAwCisgICAgICAgICAgPyBCdWZmZXIuZnJvbShqc29uUHJlZml4KQorICAgICAgICAgIDogY2h1bmsuc3ViYXJyYXkoMCwgTWF0aC5taW4oY2h1bmsuYnl0ZUxlbmd0aCwgdG90YWxCeXRlcyAtIGJ5dGVzUHVsbGVkKSk7CisgICAgICBieXRlc1B1bGxlZCArPSBuZXh0LmJ5dGVMZW5ndGg7CisgICAgICBjb250cm9sbGVyLmVucXVldWUobmV4dCk7CisgICAgfSwKKyAgICBjYW5jZWwoKSB7CiAgICAgICBjYW5jZWxlZCA9IHRydWU7Ci0gICAgfQorICAgIH0sCiAgIH0pOwotICBjb25zdCBwcmVmaXggPSBCdWZmZXIuZnJvbShqc29uUHJlZml4KTsKLSAgYnl0ZXNQdWxsZWQgKz0gcHJlZml4LmJ5dGVMZW5ndGg7Ci0gIHJlcy53cml0ZShwcmVmaXgpOwotICBjb25zdCBzZW5kQ2h1bmsgPSAoKSA9PiB7Ci0gICAgaWYgKGJ5dGVzUHVsbGVkID49IHRvdGFsQnl0ZXMpIHsKLSAgICAgIGlmICghcmVzLmRlc3Ryb3llZCkgewotICAgICAgICBlbmRlZCA9IHRydWU7Ci0gICAgICAgIHJlcy5lbmQoJyJ9Jyk7Ci0gICAgICB9Ci0gICAgICByZXR1cm47Ci0gICAgfQotICAgIGNvbnN0IHJlbWFpbmluZyA9IHRvdGFsQnl0ZXMgLSBieXRlc1B1bGxlZDsKLSAgICBjb25zdCBzaXplID0gTWF0aC5taW4oY2h1bmsuYnl0ZUxlbmd0aCwgcmVtYWluaW5nKTsKLSAgICBieXRlc1B1bGxlZCArPSBzaXplOwotICAgIGNvbnN0IG9rID0gcmVzLndyaXRlKGNodW5rLnN1YmFycmF5KDAsIHNpemUpKTsKLSAgICBpZiAob2spIHsKLSAgICAgIHNldEltbWVkaWF0ZShzZW5kQ2h1bmspOwotICAgICAgcmV0dXJuOwotICAgIH0KLSAgICByZXMub25jZSgiZHJhaW4iLCBzZW5kQ2h1bmspOwotICB9OwotICBzZXRJbW1lZGlhdGUoc2VuZENodW5rKTsKICAgcmV0dXJuIHsKKyAgICByZXNwb25zZTogbmV3IFJlc3BvbnNlKGJvZHksIHsgaGVhZGVyczogeyAiY29udGVudC10eXBlIjogImFwcGxpY2F0aW9uL2pzb24iIH0gfSksCiAgICAgYnl0ZXNQdWxsZWQ6ICgpID0+IGJ5dGVzUHVsbGVkLAotICAgIGNhbmNlbGVkOiAoKSA9PiBjYW5jZWxlZCB8fCAoIWVuZGVkICYmIGJ5dGVzUHVsbGVkIDwgdG90YWxCeXRlcyksCisgICAgY2FuY2VsZWQ6ICgpID0+IGNhbmNlbGVkLAogICB9OwogfQpkaWZmIC0tZ2l0IGEvZXh0ZW5zaW9ucy9mZWlzaHUvc3JjL3N0cmVhbWluZy1jYXJkLnRlc3QudHMgYi9leHRlbnNpb25zL2ZlaXNodS9zcmMvc3RyZWFtaW5nLWNhcmQudGVzdC50cwppbmRleCA1ZWI2NjVmMzM5Li45YjA2NTVlMGNlIDEwMDY0NAotLS0gYS9leHRlbnNpb25zL2ZlaXNodS9zcmMvc3RyZWFtaW5nLWNhcmQudGVzdC50cworKysgYi9leHRlbnNpb25zL2ZlaXNodS9zcmMvc3RyZWFtaW5nLWNhcmQudGVzdC50cwpAQCAtMyw3ICszLDExIEBAIGltcG9ydCB7IGNyZWF0ZVNlcnZlciwgdHlwZSBJbmNvbWluZ01lc3NhZ2UsIHR5cGUgU2VydmVyUmVzcG9uc2UgfSBmcm9tICJub2RlOmh0CiBpbXBvcnQgdHlwZSB7IExvb2t1cEZuIH0gZnJvbSAib3BlbmNsYXcvcGx1Z2luLXNkay9zc3JmLXJ1bnRpbWUiOwogaW1wb3J0IHsgd2l0aEZldGNoUHJlY29ubmVjdCB9IGZyb20gIm9wZW5jbGF3L3BsdWdpbi1zZGsvdGVzdC1lbnYiOwogaW1wb3J0IHsgYWZ0ZXJFYWNoLCBiZWZvcmVFYWNoLCBkZXNjcmliZSwgZXhwZWN0LCBpdCwgdmkgfSBmcm9tICJ2aXRlc3QiOwotaW1wb3J0IHsgcmVhZFJlcXVlc3RCb2R5LCBzdHJpcERpc3BhdGNoZXIsIHdyaXRlT3ZlcnNpemVkSnNvbiB9IGZyb20gIi4vaHR0cC50ZXN0LXN1cHBvcnQuanMiOworaW1wb3J0IHsKKyAgY3JlYXRlT3ZlcnNpemVkSnNvblJlc3BvbnNlLAorICByZWFkUmVxdWVzdEJvZHksCisgIHN0cmlwRGlzcGF0Y2hlciwKK30gZnJvbSAiLi9odHRwLnRlc3Qtc3VwcG9ydC5qcyI7CiBpbXBvcnQgeyBGZWlzaHVTdHJlYW1pbmdTZXNzaW9uLCBtZXJnZVN0cmVhbWluZ1RleHQgfSBmcm9tICIuL3N0cmVhbWluZy1jYXJkLmpzIjsKIGltcG9ydCB7IGNyZWF0ZVN0cmVhbWluZ1Nlc3Npb24sIHR5cGUgU3RyZWFtaW5nRmV0Y2hEZXBzIH0gZnJvbSAiLi9zdHJlYW1pbmctY2FyZC50ZXN0LXN1cHBvcnQuanMiOwogCkBAIC00NDAsMjIgKzQ0NCwxNSBAQCBkZXNjcmliZSgiRmVpc2h1U3RyZWFtaW5nU2Vzc2lvbiIsICgpID0+IHsKICAgfSk7CiAKICAgaXQoInJlamVjdHMgb3ZlcnNpemVkIHN0cmVhbWluZyB0ZW5hbnQtdG9rZW4gSlNPTiBiZWZvcmUgYnVmZmVyaW5nIHRoZSBmdWxsIGJvZHkiLCBhc3luYyAoKSA9PiB7Ci0gICAgbGV0IHN0cmVhbVN0YXRlOgotICAgICAgfCB7Ci0gICAgICAgICAgYnl0ZXNQdWxsZWQ6ICgpID0+IG51bWJlcjsKLSAgICAgICAgICBjYW5jZWxlZDogKCkgPT4gYm9vbGVhbjsKLSAgICAgICAgfQotICAgICAgfCB1bmRlZmluZWQ7Ci0gICAgY29uc3QgZGVwcyA9IGF3YWl0IGNyZWF0ZVN0cmVhbWluZ0ZldGNoKCh7IHVybCwgcmVzIH0pID0+IHsKKyAgICBjb25zdCBzdHJlYW1TdGF0ZSA9IGNyZWF0ZU92ZXJzaXplZEpzb25SZXNwb25zZSgKKyAgICAgIEZFSVNIVV9KU09OX01BWF9CWVRFUyAqIDIsCisgICAgICAneyJjb2RlIjowLCJtc2ciOiJvayIsInRlbmFudF9hY2Nlc3NfdG9rZW4iOiJ0b2tlbiIsInBhZGRpbmciOiInLAorICAgICk7CisgICAgY29uc3QgZGVwcyA9IGNyZWF0ZU1lbW9yeUZldGNoKCh1cmwpID0+IHsKICAgICAgIGlmICh1cmwucGF0aG5hbWUuaW5jbHVkZXMoIi9hdXRoLyIpKSB7Ci0gICAgICAgIHN0cmVhbVN0YXRlID0gd3JpdGVPdmVyc2l6ZWRKc29uKAotICAgICAgICAgIHJlcywKLSAgICAgICAgICBGRUlTSFVfSlNPTl9NQVhfQllURVMgKiAyLAotICAgICAgICAgICd7ImNvZGUiOjAsIm1zZyI6Im9rIiwidGVuYW50X2FjY2Vzc190b2tlbiI6InRva2VuIiwicGFkZGluZyI6IicsCi0gICAgICAgICk7Ci0gICAgICAgIHJldHVybjsKKyAgICAgICAgcmV0dXJuIHN0cmVhbVN0YXRlLnJlc3BvbnNlOwogICAgICAgfQotICAgICAgd3JpdGVKc29uKHJlcywgeyBjb2RlOiAwLCBtc2c6ICJvayIsIGRhdGE6IHsgY2FyZF9pZDogImNhcmRfb3ZlcnNpemVkX3Rva2VuIiB9IH0pOworICAgICAgcmV0dXJuIFJlc3BvbnNlLmpzb24oeyBjb2RlOiAwLCBtc2c6ICJvayIsIGRhdGE6IHsgY2FyZF9pZDogImNhcmRfb3ZlcnNpemVkX3Rva2VuIiB9IH0pOwogICAgIH0pOwogCiAgICAgY29uc3Qgc2Vzc2lvbiA9IGNyZWF0ZVN0cmVhbWluZ1Nlc3Npb24oCkBAIC01NDEsMjcgKzUzOCwyMCBAQCBkZXNjcmliZSgiRmVpc2h1U3RyZWFtaW5nU2Vzc2lvbiIsICgpID0+IHsKICAgfSk7CiAKICAgaXQoInJlamVjdHMgb3ZlcnNpemVkIHN0cmVhbWluZyBjYXJkLWNyZWF0ZSBKU09OIGJlZm9yZSBidWZmZXJpbmcgdGhlIGZ1bGwgYm9keSIsIGFzeW5jICgpID0+IHsKLSAgICBsZXQgc3RyZWFtU3RhdGU6Ci0gICAgICB8IHsKLSAgICAgICAgICBieXRlc1B1bGxlZDogKCkgPT4gbnVtYmVyOwotICAgICAgICAgIGNhbmNlbGVkOiAoKSA9PiBib29sZWFuOwotICAgICAgICB9Ci0gICAgICB8IHVuZGVmaW5lZDsKLSAgICBjb25zdCBkZXBzID0gYXdhaXQgY3JlYXRlU3RyZWFtaW5nRmV0Y2goKHsgdXJsLCByZXMgfSkgPT4geworICAgIGNvbnN0IHN0cmVhbVN0YXRlID0gY3JlYXRlT3ZlcnNpemVkSnNvblJlc3BvbnNlKAorICAgICAgRkVJU0hVX0pTT05fTUFYX0JZVEVTICogMiwKKyAgICAgICd7ImNvZGUiOjAsIm1zZyI6Im9rIiwidGVuYW50X2FjY2Vzc190b2tlbiI6InRva2VuIiwicGFkZGluZyI6IicsCisgICAgKTsKKyAgICBjb25zdCBkZXBzID0gY3JlYXRlTWVtb3J5RmV0Y2goKHVybCkgPT4gewogICAgICAgaWYgKHVybC5wYXRobmFtZS5pbmNsdWRlcygiL2F1dGgvIikpIHsKLSAgICAgICAgd3JpdGVKc29uKHJlcywgeworICAgICAgICByZXR1cm4gUmVzcG9uc2UuanNvbih7CiAgICAgICAgICAgY29kZTogMCwKICAgICAgICAgICBtc2c6ICJvayIsCiAgICAgICAgICAgdGVuYW50X2FjY2Vzc190b2tlbjogInRva2VuIiwKICAgICAgICAgICBleHBpcmU6IDcyMDAsCiAgICAgICAgIH0pOwotICAgICAgICByZXR1cm47CiAgICAgICB9Ci0gICAgICBzdHJlYW1TdGF0ZSA9IHdyaXRlT3ZlcnNpemVkSnNvbigKLSAgICAgICAgcmVzLAotICAgICAgICBGRUlTSFVfSlNPTl9NQVhfQllURVMgKiAyLAotICAgICAgICAneyJjb2RlIjowLCJtc2ciOiJvayIsInRlbmFudF9hY2Nlc3NfdG9rZW4iOiJ0b2tlbiIsInBhZGRpbmciOiInLAotICAgICAgKTsKKyAgICAgIHJldHVybiBzdHJlYW1TdGF0ZS5yZXNwb25zZTsKICAgICB9KTsKIAogICAgIGNvbnN0IHNlc3Npb24gPSBjcmVhdGVTdHJlYW1pbmdTZXNzaW9uKApkaWZmIC0tZ2l0IGEvc3JjL2dhdGV3YXkvc2Vzc2lvbi1tZXNzYWdlLWV2ZW50cy5leGVjLWNvbXBsZXRpb24udGVzdC50cyBiL3NyYy9nYXRld2F5L3Nlc3Npb24tbWVzc2FnZS1ldmVudHMuZXhlYy1jb21wbGV0aW9uLnRlc3QudHMKaW5kZXggNjM4ZjZlNDcyOS4uMGM1MThkNWQwMyAxMDA2NDQKLS0tIGEvc3JjL2dhdGV3YXkvc2Vzc2lvbi1tZXNzYWdlLWV2ZW50cy5leGVjLWNvbXBsZXRpb24udGVzdC50cworKysgYi9zcmMvZ2F0ZXdheS9zZXNzaW9uLW1lc3NhZ2UtZXZlbnRzLmV4ZWMtY29tcGxldGlvbi50ZXN0LnRzCkBAIC0xOTQsMTEgKzE5NCwxMiBAQCBkZXNjcmliZSgiZXhlYyBjb21wbGV0aW9uIFdlYkNoYXQgcHVibGljYXRpb24iLCAoKSA9PiB7CiAgICAgICAgICAgd3MuY2xvc2UoKTsKICAgICAgICAgICBhd2FpdCBjbG9zZWQ7CiAgICAgICAgIH0KLSAgICAgICAgY29uc3QgbGl2ZSA9IGRpc2Nvbm5lY3RlZCA/IHVuZGVmaW5lZCA6IHdhaXRGb3JTZXNzaW9uTWVzc2FnZUV2ZW50KHdzLCBzZXNzaW9uS2V5KTsKICAgICAgICAgYXdhaXQgcHJlcGFyZUdhdGV3YXlSZXBseVJ1bnRpbWVGb3JUZXN0KHsgZm9yY2U6IHRydWUsIGNvbmZpZzogY2ZnIH0pOwogICAgICAgICBnYXRld2F5UmVwbHlNb2NrLm1vY2tJbXBsZW1lbnRhdGlvbigoY3R4LCBvcHRpb25zLCBjb25maWcpID0+CiAgICAgICAgICAgZ2V0UmVwbHlGcm9tQ29uZmlnKGN0eCwgb3B0aW9ucywgd2l0aEZ1bGxSdW50aW1lUmVwbHlDb25maWcoY29uZmlnID8/IGNmZykpLAogICAgICAgICApOworICAgICAgICAvLyBSdW50aW1lIHNldHVwIG11c3Qgbm90IGNvbnN1bWUgdGhlIGRlbGl2ZXJ5IGRlYWRsaW5lLgorICAgICAgICBjb25zdCBsaXZlID0gZGlzY29ubmVjdGVkID8gdW5kZWZpbmVkIDogd2FpdEZvclNlc3Npb25NZXNzYWdlRXZlbnQod3MsIHNlc3Npb25LZXkpOwogICAgICAgICByZWNlaXB0ID0gZW5xdWV1ZVNlc3Npb25FdmVudEZvckhvc3QoCiAgICAgICAgICAgYEV4ZWMgY29tcGxldGVkICh3ZWJjaGF0LXByb29mLCBjb2RlIDApIDo6ICR7bWFya2VyfWAsCiAgICAgICAgICAgewo=' | base64 -d > .proof/candidate.patch
+          git apply --check .proof/candidate.patch
+          git apply .proof/candidate.patch
+          git diff --check
+      - name: Run affected owners and original Feishu group
+        if: matrix.variant == 'owner'
+        env:
+          OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+          OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: H4sIAAAAAAAAA5WWzW7bMAyA38W5hs6arr9P0XtRFLRE20RkyaWopsGwdx/kpGmxYpN68uX7KIqiRD/+akzwPQ+xuX9slKJuXvnTp6U3JR85eOiJ45jaI95qbJ7WDXvjkqUHVCXxS4yzEDdHYxPFbNCYkLzGdgmqsVn/C5xnEBo4qqBy8GUhHrwpUl1Q6CSgNRi1ddyTORhHVd4gIc3gcarC26zoKIS2vNuFP6clISn7ocoyKBbQVJXIjOg9uRpOy5Bj8trm/QEmHYOwHmqtIhamibyC5TijmpGkWhnRW1fF5/6FaEaasEhbcvxKcgAVNOXztyxkNEi5IHaCc2wXwtyh2ZWlYN6ARIJ801HsHJ3apdyVWSlDwq8Ep+rHb+STvSI1kWUEMya/A7YVF/Uo2LD3LqCtwyuoGHHIu/Sae6x6k1PwrEHaU3mq+fcF35vZUheSNwRzcGzKXfUeZ0/dGMIOal+UkDQvVK5bZR6zUCSvywsO+akqGkKzO3y+91Ow5GCPXK7eFzeqEE7sB8in5UK5AF9ClIRIRkiXzhA05RwjeQtCMbk6tj1m1KNzVR23OGXoJZFXRgcviVL5VkXSNENM0te8fh9lrzry45CEjr1lP8R2dmng8jT7Wyvxe97xGXpaN3FEsc95nDf3TR6NA1n4UOE0ILbbZt0o5+087+jwif2fs4rklgkAP6/B3tkr+nHT3RHdrgbydPylga7vtledubzG/nY1oyhcQOjhYnX6ncrujenM5eVFh9vbu+b30x8yaziJqAkAAA==
+        run: |
+          set -euo pipefail
+          node scripts/run-vitest.mjs src/gateway/session-message-events.exec-completion.test.ts --maxWorkers=1 2>&1 | tee .proof/gateway.log
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/feishu-group.log
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 extensions/feishu/src/http.test-support.ts extensions/feishu/src/app-registration.test.ts extensions/feishu/src/streaming-card.test.ts src/gateway/session-message-events.exec-completion.test.ts 2>&1 | tee .proof/lint.log
+          node scripts/run-format.mts --check extensions/feishu/src/http.test-support.ts extensions/feishu/src/app-registration.test.ts extensions/feishu/src/streaming-card.test.ts src/gateway/session-message-events.exec-completion.test.ts 2>&1 | tee .proof/format.log
+      - name: Check relevant test type graphs
+        if: matrix.variant == 'types'
+        run: |
+          set -euo pipefail
+          node scripts/run-tsgo.mjs -p test/tsconfig/tsconfig.extensions.test.json 2>&1 | tee .proof/extension-types.log
+          node scripts/run-tsgo.mjs -p test/tsconfig/tsconfig.core.test.gateway-root.json 2>&1 | tee .proof/gateway-types.log
+      - name: Break a protected contract for negative control
+        if: matrix.variant == 'no-cap' || matrix.variant == 'no-cancel'
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          if os.environ['VARIANT'] == 'no-cap':
+              path = Path('src/agents/provider-http-errors.ts')
+              source = path.read_text()
+              old = 'const bytes = await readProviderResponseBytes(response, label, "JSON", opts);'
+              assert source.count(old) == 1
+              path.write_text(source.replace(old, 'const bytes = Buffer.from(await response.arrayBuffer());'))
+          else:
+              for filename, describe in [('app-registration.test.ts', 'describe("Feishu app registration", () => {'), ('streaming-card.test.ts', 'describe("FeishuStreamingSession", () => {')]:
+                  path = Path('extensions/feishu/src') / filename
+                  source = path.read_text()
+                  if filename == 'app-registration.test.ts':
+                      source = source.replace('afterEach, describe,', 'afterEach, beforeEach, describe,')
+                  assert source.count(describe) == 1
+                  source = source.replace(describe, describe + '\n  beforeEach(() => {\n    vi.spyOn(ReadableStreamDefaultReader.prototype, "cancel").mockResolvedValue(undefined);\n    vi.spyOn(ReadableStream.prototype, "cancel").mockResolvedValue(undefined);\n  });')
+                  path.write_text(source)
+          PY
+          git diff > .proof/negative-control.patch
+      - name: Verify all three negative controls actually fail
+        if: matrix.variant == 'no-cap' || matrix.variant == 'no-cancel'
+        run: |
+          set -euo pipefail
+          set +e
+          node scripts/run-vitest.mjs extensions/feishu/src/app-registration.test.ts extensions/feishu/src/streaming-card.test.ts --maxWorkers=1 --testNamePattern='rejects Feishu API responses that exceed|rejects oversized streaming' 2>&1 | tee .proof/negative-control.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > .proof/actual-exit.txt
+          test "$result" -ne 0
+          grep -q '3 failed' .proof/negative-control.log
+          if [[ "$VARIANT" == no-cancel ]]; then
+            grep -q 'expected false to be true' .proof/negative-control.log
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: ci-fixtures-${{ matrix.variant }}-20261023
+          path: .proof/
+          include-hidden-files: true
