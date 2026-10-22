@@ -1,0 +1,75 @@
+name: PR176119 WebChat setup boundary proof
+on:
+  push:
+    branches: [proof/zsh-webchat-setup-20261023]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+jobs:
+  boundary:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [original, repaired]
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: eb7382ee019cd2866265d6371342d2e4a1cd2153
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Apply identical controlled setup delay and candidate ordering
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p .proof
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path('src/gateway/session-message-events.exec-completion.test.ts')
+          source = path.read_text()
+          listener = '        const live = disconnected ? undefined : waitForSessionMessageEvent(ws, sessionKey);\n'
+          preparation = '        await prepareGatewayReplyRuntimeForTest({ force: true, config: cfg });\n'
+          enqueue = '        receipt = enqueueSessionEventForHost(\n'
+          assert source.count(listener) == source.count(preparation) == source.count(enqueue) == 1
+          if os.environ['VARIANT'] == 'repaired':
+              source = source.replace(listener, '').replace(enqueue, listener + enqueue)
+          # A bounded diagnostic delay, never part of the submitted test fixture.
+          source = source.replace(preparation, '        if (!disconnected) await new Promise((resolve) => setTimeout(resolve, 11_000));\n' + preparation)
+          path.write_text(source)
+          PY
+          git diff > .proof/diagnostic.patch
+      - name: Capture actual test result
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          set +e
+          node scripts/run-vitest.mjs src/gateway/session-message-events.exec-completion.test.ts --maxWorkers=1 2>&1 | tee .proof/test.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > .proof/actual-exit.txt
+          if [[ "$VARIANT" == original ]]; then
+            test "$result" -ne 0
+            grep -q 'timeout' .proof/test.log
+            grep -q 'disconnected=false' .proof/test.log
+          else
+            test "$result" -eq 0
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: webchat-setup-${{ matrix.variant }}-20261023
+          path: .proof/
+          include-hidden-files: true
