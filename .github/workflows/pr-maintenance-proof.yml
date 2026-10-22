@@ -1,0 +1,49 @@
+name: PR176119 browser fixture repair validation
+on:
+  push:
+    branches: [proof/zsh-browser-repair-20261022]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+  REVIEWED_HEAD: a4ece30a7723373200a31e33b2171248302a7eff
+jobs:
+  browser:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+      OPENCLAW_VITEST_MAX_WORKERS: '2'
+      OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+      OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: H4sIAAAAAAAAA7WX227iMBCG3yXcYgdKWUGfYu+rqhrswbFwxpE9IUSrffdVDoVqDzQG9gpFzPc7M2P/47z+yJSnvTUxe3nNGCPnR/vpR+KJkaL1JHbBNxGDHOIlx+xtnllSrtb4HZgxUC9yJmI+Irkqgi9RnP/Jd6AOJviatASlMEZReo2yX5FjNk8VUQGBu5d0do+qVe4OraugJY2n6yGVq40lEdDYyKF/LRkx9jUckr2BL2rWvqHrZAwqB2ZQBeqPdgn23olQE9vyi6J0+AdFXqOogj+105k+XNSV89C1le0RRePD4UaFyVSXoYyqwBISoanROSgWlXdWTS9HrnQ1JrRrK/iq67+RskBXYUiEpgcP+79UlVCeCBXfwkrlEKi+ad2bmONSVIghlZUa91A7PltYMm/BkI9sVZQcgGLlQ3LFZIGgXed1N5ZNWupMFhL2rXIWicUeWRVysAbhybUSn6abwaiSED9OiKnxlxlD0LtG4WPCchc8oIM2N8DYQDs8CUsmdJ7bFc+Mdvog6eBrxv8nfLOYbwiDgJoLkdq6v0uNHtFl+JBsB9WI4ZhyGH9XqQL2OTa4i14dkIWpIUwfHH8IDsXfec/d4K0ek+soGqw2KIeD+BitO1WUx5ONjKQwzQ2+lntg3R5SsNTbzz9kxv3a77nj071qDMEgJwz4i0xEru/enY0l7ZsoSiAwWCa5BMHRmuHCnXjkKuAiIecq+L11GPvaW5XQwuHm1cNn6G2exQKCficoMXvJVAFkUF8+A6IYRpdYrrJ5xra0ZN4P2H6KvcbMIjpU7INYLrZirdd7hRr0Fp9nBgmHXonn5Wb5rPXTdrH9NqsgsFgKvxer2fgtJdYLsd1uVriB9Wq3WWQ/334BGnAtOaYNAAA=
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Verify reviewed source and replay the complete original browser group
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git fetch --no-tags --depth=1 origin "$REVIEWED_HEAD"
+          git diff --exit-code "$REVIEWED_HEAD" HEAD -- . ':!.github/workflows/pr-maintenance-proof.yml'
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/browser-tests.log
+      - name: Check changed fixture lint and formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 extensions/browser/src/browser/chrome.default-browser.test.ts 2>&1 | tee .proof/lint.log
+          node scripts/run-format.mts --check extensions/browser/src/browser/chrome.default-browser.test.ts 2>&1 | tee .proof/format.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-browser-repair-20261022
+          path: .proof/
+          include-hidden-files: true
