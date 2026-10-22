@@ -1,0 +1,59 @@
+name: PR176119 audio worker failure comparison
+on:
+  push:
+    branches: [proof/zsh-audio-comparison-20261023]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+jobs:
+  comparison:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: base
+            source: b8fda397d5c9cf31d820666726e1e6899919a78e
+          - label: merge
+            source: 1fd7cfcbee663c9b62a71d1b8376725f70ec7bad
+    env:
+      OPENCLAW_CI_TEST_RUNTIME_POLICY: bun-all
+      OPENCLAW_VITEST_MAX_WORKERS: '2'
+      OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: '1'
+      OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: H4sIAAAAAAAAA6WWzW7bMAzH38W5hm7Sdu3Wp9i9KAqaohwhMuVJtNNg2LsPdtqs2QJH8U46mD9K/PPLzz8LCmJdnYqn50I56U3vPh0lvylLckGgjaF3hiOElgVdeeBKTcXLsnBCvjP8HVU5yujsSKabA3FjmNyJq3K8QlOxPGPNTcXGOKmhQqXNpK1rsGaoWTiintyAnc5FZ1I+zSS76OeSCWueZsXw26RFw8YhdGI4JkUZhc+SogmGPVCQpLGj4WGla9oQdVqHwwHYOtjyHggVfahzENqg1q2C4d4RAwUzHftfWBhKAqwPuzJ2oq65np4DZmn5wQTDb2BcotBz3OcgZi/YOIIxGznA8T2RUxskcVa6sqI4TopRKwqiEUnzkA9ls6jI6AdrwM64AFVn7TCfdsIxbVybx3rX81CGedY/Okfb5HzPEQx7rsdWvJ616HwXpyvoLFij8g73h5Dn41V0ph6Ct0x78jMe0jJH2IW4vVANZ+HEadwEkdVFblgyE33Gx3+AESUNkyrPRR+GcfMuHAURpvzcn8Dcs1wYj/+AYZc+OuoKTjk2TtBD6JRCc6HJT+EytEN86IGw1UvFmlpm2uQNiHfbq3pdw5YF0gbjsJly1sUpkT+4T7mkkbE5Ai/LYvhiXgUbLp4K2qDUbOCPGzj8GMH69q5YFuoaJ/XrlvefjCehRWLPpCHC/RrsfUUr+3h3u340i0+r3z5QtfpiHh7W1i5ajAprCBbWi/cfsYG9q3j19f4b2RV9LX69/AYqdCRE6wkAAA==
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.source }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Capture original ordered audio group and original exit code
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          git rev-parse HEAD > .proof/source.txt
+          set +e
+          node --import ./scripts/tsx.mjs scripts/ci-run-node-test-shard.mts 2>&1 | tee .proof/original-audio-group.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > .proof/original-exit.txt
+          echo "Original audio test group exit: $result"
+          test -s .proof/original-audio-group.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: zsh-audio-comparison-${{ matrix.label }}-20261023
+          path: .proof/
+          include-hidden-files: true
