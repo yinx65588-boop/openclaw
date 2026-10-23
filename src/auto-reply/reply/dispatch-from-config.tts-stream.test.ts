@@ -30,6 +30,35 @@ beforeEach(() => {
   setNoAbort();
 });
 
+it("delivers a captioned final answer once when streamed blocks use fewer blank lines", async () => {
+  installCaptionedVoiceTestPlugin("telegram");
+  ttsMocks.state.synthesizeFinalAudio = true;
+  const paragraphs = ["First paragraph.", "```text\nkeep two spaces  \nkeep a tab\t\n```", "FIN"];
+  const finalText = "First paragraph.\n\n```text\nkeep two spaces  \nkeep a tab\t\n```\n\nFIN";
+  const delivered: ReplyPayload[] = [];
+  const dispatcher = createReplyDispatcher({
+    deliver: async (payload) => {
+      delivered.push(payload);
+    },
+  });
+  await dispatchReplyFromConfig({
+    ctx: buildTestCtx({ Provider: "telegram", Surface: "telegram" }),
+    cfg: emptyConfig,
+    dispatcher,
+    replyResolver: async (_ctx, opts) => {
+      for (const text of paragraphs) {
+        await opts?.onBlockReply?.({ text });
+      }
+      return { text: finalText };
+    },
+  });
+  dispatcher.markComplete();
+  await dispatcher.waitForIdle();
+  expect(delivered).toEqual([
+    expect.objectContaining({ text: finalText, audioAsVoice: true }),
+  ]);
+});
+
 it.each([
   {
     name: "opening bracket pair",

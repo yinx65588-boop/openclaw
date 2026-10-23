@@ -11,6 +11,15 @@ describe("mergeDeferredFinalText", () => {
   it("keeps distinct streamed and final text", () => {
     expect(mergeDeferredFinalText("first", "second")).toBe("first\nsecond");
   });
+
+  it.each([
+    ["```text\nfirst\nsecond\n```", "```text\nfirst\n\nsecond\n```"],
+    ["~~~text\nfirst\nsecond\n~~~", "~~~text\nfirst\n\nsecond\n~~~"],
+    ["Example:\n\n    first\n    second", "Example:\n\n    first\n\n    second"],
+    ["`first\nsecond`", "`first\n\nsecond`"],
+  ])("keeps different code whitespace in %j", (streamed, final) => {
+    expect(mergeDeferredFinalText(streamed, final)).toBe(`${streamed}\n${final}`);
+  });
 });
 
 describe("cleanDeferredFinalText", () => {
