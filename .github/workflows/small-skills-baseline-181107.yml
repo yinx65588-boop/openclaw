@@ -1,7 +1,7 @@
 name: Skills macOS casing baseline
 on:
   push:
-    branches: [proof/small-skills-baseline-181107-20261023]
+    branches: [proof/small-skills-baseline-181107-20261023-git]
 permissions:
   contents: read
 jobs:
