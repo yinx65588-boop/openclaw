@@ -78,7 +78,7 @@ config = {
                      'thinkingDefault':'off','timeoutSeconds':180,'skills':[]},'entries':{'main':{}}},
  'models':{'providers':{
   'proof-model':{'api':'openai-completions','apiKey':'synthetic-model-key','baseUrl':'https://proof-model.test/v1','models':[{'id':'fixture-model','name':'Synthetic model','reasoning':False,'input':['text'],'contextWindow':32000,'maxTokens':1024}]},
-  'fal':{'baseUrl':'https://fal.run','apiKey':'synthetic-fal-key','models':[]},
+  'fal':{'baseUrl':'https://proof-model.test','apiKey':'synthetic-fal-key','models':[]},
   'xai':{'baseUrl':'https://api.x.ai/v1','apiKey':'synthetic-xai-key','models':[]}}},
  'gateway':{'mode':'local','bind':'loopback','port':18792,'auth':{'mode':'token','token':'synthetic-media-gateway-token'},'controlUi':{'enabled':False}},
  'tools':{'web':{'search':{'enabled':False}}},
