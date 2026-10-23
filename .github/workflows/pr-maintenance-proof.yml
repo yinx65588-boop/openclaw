@@ -1,0 +1,43 @@
+name: Retained remote skill catalog regression
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+jobs:
+  regression:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 4b85835fc16692ebc86b491913b1f6f989df7a79
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Apply regression fixture
+        run: |
+          mkdir -p .proof
+          echo 'ZGlmZiAtLWdpdCBhL3NyYy9hZ2VudHMvc2FuZGJveC9yZW1vdGUtc2hlbGwtYmFja2VuZC50ZXN0LnRzIGIvc3JjL2FnZW50cy9zYW5kYm94L3JlbW90ZS1zaGVsbC1iYWNrZW5kLnRlc3QudHMKaW5kZXggM2U0OGQ3MDNjLi4xMWRmMmE1ZGMgMTAwNjQ0Ci0tLSBhL3NyYy9hZ2VudHMvc2FuZGJveC9yZW1vdGUtc2hlbGwtYmFja2VuZC50ZXN0LnRzCisrKyBiL3NyYy9hZ2VudHMvc2FuZGJveC9yZW1vdGUtc2hlbGwtYmFja2VuZC50ZXN0LnRzCkBAIC0yMzEsNiArMjMxLDU5IEBAIGFzeW5jIGZ1bmN0aW9uIGNyZWF0ZUZpeHR1cmUoKSB7CiBkZXNjcmliZS5ydW5JZihwcm9jZXNzLnBsYXRmb3JtID09PSAibGludXgiIHx8IHByb2Nlc3MucGxhdGZvcm0gPT09ICJkYXJ3aW4iKSgKICAgInJlbW90ZSB3b3Jrc3BhY2UgaW5pdGlhbGl6YXRpb24iLAogICAoKSA9PiB7CisgICAgaXQuZWFjaChbIm5vbmUiLCAicm8iLCAicnciXSBhcyBjb25zdCkoCisgICAgICAiZGVsaXZlcnMgcmV0YWluZWQgY2F0YWxvZ3MgdG8gcmV1c2VkICVzIHJ1bnRpbWVzIHdpdGhvdXQgY2xlYXJpbmcgYWN0aXZlIHJlYWRlcnMiLAorICAgICAgYXN5bmMgKHdvcmtzcGFjZUFjY2VzcykgPT4geworICAgICAgICBjb25zdCByb290ID0gYXdhaXQgZnMucmVhbHBhdGgodGVtcERpcnMubWFrZSgicmVtb3RlLXNoZWxsLWNhdGFsb2ctIikpOworICAgICAgICBjb25zdCB3b3Jrc3BhY2VEaXIgPSBwYXRoLmpvaW4ocm9vdCwgImhvc3QiKTsKKyAgICAgICAgY29uc3Qgc2tpbGxzV29ya3NwYWNlRGlyID0gcGF0aC5qb2luKHJvb3QsICJtYXRlcmlhbGl6ZWQiKTsKKyAgICAgICAgYXdhaXQgd3JpdGVGaWxlKHBhdGguam9pbih3b3Jrc3BhY2VEaXIsICJ1c2VyLnR4dCIpLCAibG9jYWwgc2VlZCIpOworICAgICAgICBjb25zdCBjZmcgPSB7CisgICAgICAgICAgLi4uc2FuZGJveENvbmZpZyhwYXRoLmpvaW4ocm9vdCwgInJlbW90ZSIpKSwKKyAgICAgICAgICBzY29wZTogImFnZW50IiBhcyBjb25zdCwKKyAgICAgICAgICB3b3Jrc3BhY2VBY2Nlc3MsCisgICAgICAgIH07CisgICAgICAgIGNvbnN0IHNvdXJjZSA9IHdvcmtzcGFjZUFjY2VzcyA9PT0gInJ3IiA/IHNraWxsc1dvcmtzcGFjZURpciA6IHdvcmtzcGFjZURpcjsKKyAgICAgICAgY29uc3QgY2F0YWxvZyA9IChuYW1lOiBzdHJpbmcpID0+IHBhdGguam9pbihzb3VyY2UsICJza2lsbHMiLCAiLm9wZW5jbGF3LWNhdGFsb2dzIiwgbmFtZSk7CisgICAgICAgIGNvbnN0IGZpcnN0Q2F0YWxvZyA9IGNhdGFsb2coInJ1bi1maXJzdCIpOworICAgICAgICBhd2FpdCB3cml0ZUZpbGUocGF0aC5qb2luKGZpcnN0Q2F0YWxvZywgInNraWxscyIsICJkZW1vIiwgIlNLSUxMLm1kIiksICJPcmlnaW5hbEFscGhhIik7CisgICAgICAgIGNvbnN0IGJhY2tlbmRGb3IgPSAoc2tpbGxDYXRhbG9nRGlyOiBzdHJpbmcsIGJlZm9yZVVwbG9hZD86ICgpID0+IFByb21pc2U8dm9pZD4pID0+CisgICAgICAgICAgY3JlYXRlQmFja2VuZCgKKyAgICAgICAgICAgIHdvcmtzcGFjZURpciwKKyAgICAgICAgICAgIGFzeW5jICgpID0+IHsKKyAgICAgICAgICAgICAgY29uc3Qgc2Vzc2lvbiA9IHNlc3Npb25Gb3Iocm9vdCk7CisgICAgICAgICAgICAgIHJldHVybiB7CisgICAgICAgICAgICAgICAgLi4uc2Vzc2lvbiwKKyAgICAgICAgICAgICAgICB1cGxvYWREaXJlY3Rvcnk6IGFzeW5jIChwYXJhbXMpID0+IHsKKyAgICAgICAgICAgICAgICAgIGF3YWl0IGJlZm9yZVVwbG9hZD8uKCk7CisgICAgICAgICAgICAgICAgICBhd2FpdCBzZXNzaW9uLnVwbG9hZERpcmVjdG9yeShwYXJhbXMpOworICAgICAgICAgICAgICAgIH0sCisgICAgICAgICAgICAgIH07CisgICAgICAgICAgICB9LAorICAgICAgICAgICAgeyBjZmcsIHNjb3BlS2V5OiAiYWdlbnQ6dGVzdCIsIHNraWxsc1dvcmtzcGFjZURpciwgLi4ueyBza2lsbENhdGFsb2dEaXIgfSB9LAorICAgICAgICAgICk7CisgICAgICAgIGNvbnN0IGZpcnN0ID0gYXdhaXQgYmFja2VuZEZvcihmaXJzdENhdGFsb2cpOworICAgICAgICBhd2FpdCBydW4oZmlyc3QpOworICAgICAgICBjb25zdCByZW1vdGVCYXNlID0KKyAgICAgICAgICB3b3Jrc3BhY2VBY2Nlc3MgPT09ICJydyIKKyAgICAgICAgICAgID8gcGF0aC5qb2luKGZpcnN0LndvcmtkaXIsICIub3BlbmNsYXciLCAic2FuZGJveC1za2lsbHMiKQorICAgICAgICAgICAgOiBmaXJzdC53b3JrZGlyOworICAgICAgICBjb25zdCByZW1vdGVGaWxlID0gKG5hbWU6IHN0cmluZykgPT4KKyAgICAgICAgICBwYXRoLmpvaW4ocmVtb3RlQmFzZSwgInNraWxscyIsICIub3BlbmNsYXctY2F0YWxvZ3MiLCBuYW1lLCAic2tpbGxzIiwgImRlbW8iLCAiU0tJTEwubWQiKTsKKyAgICAgICAgYXdhaXQgZXhwZWN0VGV4dChyZW1vdGVGaWxlKCJydW4tZmlyc3QiKSwgIk9yaWdpbmFsQWxwaGEiKTsKKyAgICAgICAgYXdhaXQgd3JpdGVGaWxlKHBhdGguam9pbihmaXJzdC53b3JrZGlyLCAidXNlci50eHQiKSwgInJlbW90ZSB1c2VyIGVkaXQiKTsKKyAgICAgICAgY29uc3Qgc2Vjb25kQ2F0YWxvZyA9IGNhdGFsb2coInJ1bi1zZWNvbmQiKTsKKyAgICAgICAgYXdhaXQgd3JpdGVGaWxlKHBhdGguam9pbihzZWNvbmRDYXRhbG9nLCAic2tpbGxzIiwgImRlbW8iLCAiU0tJTEwubWQiKSwgIlJlcGxhY2VtZW50QmV0YSIpOworICAgICAgICBjb25zdCBzZWNvbmQgPSBhd2FpdCBiYWNrZW5kRm9yKHNlY29uZENhdGFsb2csICgpID0+CisgICAgICAgICAgZXhwZWN0VGV4dChyZW1vdGVGaWxlKCJydW4tZmlyc3QiKSwgIk9yaWdpbmFsQWxwaGEiKSwKKyAgICAgICAgKTsKKyAgICAgICAgYXdhaXQgcnVuKHNlY29uZCk7CisgICAgICAgIGF3YWl0IGV4cGVjdFRleHQocmVtb3RlRmlsZSgicnVuLXNlY29uZCIpLCAiUmVwbGFjZW1lbnRCZXRhIik7CisgICAgICAgIGF3YWl0IGV4cGVjdFRleHQocmVtb3RlRmlsZSgicnVuLWZpcnN0IiksICJPcmlnaW5hbEFscGhhIik7CisgICAgICAgIGF3YWl0IGV4cGVjdFRleHQocGF0aC5qb2luKGZpcnN0LndvcmtkaXIsICJ1c2VyLnR4dCIpLCAicmVtb3RlIHVzZXIgZWRpdCIpOworICAgICAgfSwKKyAgICApOworCiAgICAgaXQuZWFjaChbIndvcmtzcGFjZSIsICJhZ2VudCJdKSgKICAgICAgICJyZXRyaWVzIGluY29tcGxldGUgJXMgdXBsb2FkcyB3aXRob3V0IHB1Ymxpc2hpbmcgYSBwYXJ0aWFsIHdvcmtzcGFjZSIsCiAgICAgICBhc3luYyAoaW50ZXJydXB0ZWQpID0+IHsK' | base64 -d > .proof/regression.patch
+          git apply .proof/regression.patch
+          git diff --check
+      - name: Reused remote workspace and active reader regression
+        run: |
+          set +e
+          node scripts/test-projects.mts src/agents/sandbox/remote-shell-backend.test.ts --maxWorkers=1 --reporter=json --outputFile=.proof/remote.json 2>&1 | tee .proof/remote.log
+          result=${PIPESTATUS[0]}
+          printf '%s\n' "$result" > .proof/original-exit.txt
+          exit "$result"
+      - uses: actions/upload-artifact@cf43093dc9d57bb594b924f102e429b276cc0748
+        if: always()
+        with:
+          name: sandbox-remote-regression-20261024
+          path: .proof
+          include-hidden-files: true
