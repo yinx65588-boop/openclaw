@@ -159,7 +159,7 @@ config_path.write_text(json.dumps(config))
 env = dict(os.environ, OPENCLAW_STATE_DIR=str(state), OPENCLAW_CONFIG_PATH=str(config_path),
            OPENAI_API_KEY="fixture-not-a-real-provider-key", OPENCLAW_SKIP_CHANNELS="1",
            OPENCLAW_SKIP_BROWSER_CONTROL_SERVER="1", OPENCLAW_SKIP_CANVAS_HOST="1")
-base = ["pnpm", "--silent", "openclaw"]
+base = ["pnpm", "--silent", "start"]
 
 
 def cli(args, timeout=60, check=True):
