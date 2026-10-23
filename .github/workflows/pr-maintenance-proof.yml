@@ -1,7 +1,6 @@
 name: Agents API cron shipped CLI TLS proof
 on:
-  push:
-    branches: [proof/agentsapi-cron-cli-stream-20261023]
+  workflow_dispatch:
 permissions:
   contents: read
 env:
