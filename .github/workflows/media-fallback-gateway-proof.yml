@@ -1,0 +1,75 @@
+name: Media fallback shipped Gateway proof
+on:
+  push:
+    branches: [proof/media-fallback-gateway-20261023]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gateway:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: baseline
+            source: 7dcc40f7addb9e45ce3e36768c505ff9cb005209
+          - variant: repaired
+            source: 66d88266cb437a9746ab7de6a6ecd2b46f96855c
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.source }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: fixture-source
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Prepare synthetic transports and video
+        run: |
+          set -euo pipefail
+          mkdir -p .proof/cli
+          cp fixture-source/.proof/media-fallback-cli-proof.py .proof/cli.py
+          command -v ffmpeg
+          ffmpeg -nostdin -hide_banner -loglevel error -f lavfi -i color=c=blue:s=32x32:d=0.3 -c:v libx264 -pix_fmt yuv420p .proof/cli/fixture.mp4
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout .proof/cli/server.key -out .proof/cli/server.crt -subj '/CN=proof-model.test' -addext 'subjectAltName=DNS:proof-model.test,DNS:fal.run,DNS:api.x.ai' -addext 'basicConstraints=critical,CA:TRUE'
+          cp /etc/hosts .proof/cli/hosts
+          printf '\n93.184.216.34 proof-model.test fal.run api.x.ai\n' >> .proof/cli/hosts
+          cat > .proof/netproof.sh <<'SH'
+          set -euo pipefail
+          mount --make-rprivate /
+          ip link set lo up
+          ip addr add 93.184.216.34/32 dev lo
+          mount --bind "$PROOF_ROOT/hosts" /etc/hosts
+          python3 .proof/cli.py
+          SH
+      - name: Build shipped product
+        run: |
+          set -euo pipefail
+          pnpm build 2>&1 | tee .proof/build.log
+      - name: Exercise real Gateway media lifecycle
+        run: |
+          set -euo pipefail
+          sudo env "PATH=$PATH" "COREPACK_HOME=$COREPACK_HOME" "NODE_OPTIONS=$NODE_OPTIONS" "PROOF_ROOT=$PWD/.proof/cli" "NODE_EXTRA_CA_CERTS=$PWD/.proof/cli/server.crt" "VARIANT=${{ matrix.variant }}" "SOURCE_SHA=${{ matrix.source }}" "HOME=$PWD/.proof/cli/home" unshare --mount --net --fork bash .proof/netproof.sh 2>&1 | tee .proof/cli-result.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: media-gateway-${{ matrix.variant }}
+          path: |
+            .proof/build.log
+            .proof/cli-result.log
+            .proof/cli/*.json
+            .proof/cli/*.log
+            .proof/cli/fixture.mp4
+            .proof/cli.py
+          include-hidden-files: true
