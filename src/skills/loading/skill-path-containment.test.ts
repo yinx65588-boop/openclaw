@@ -59,6 +59,33 @@ afterEach(() => {
   resetLogger();
 });
 
+it.runIf(process.platform === "darwin")(
+  "loads workspace skills when the workspace spelling differs only in case",
+  async () => {
+    const workspace = await fixture.createDir("CaseWorkspace");
+    const configured = path.join(path.dirname(workspace), path.basename(workspace).toLowerCase());
+    await skill(path.join(workspace, "skills", "case-skill"), "case-skill");
+    const physical = await fs.stat(workspace);
+    const alias = await fs.stat(configured);
+    expect([alias.dev, alias.ino]).toEqual([physical.dev, physical.ino]);
+    const warn = captureWarningLogger();
+
+    expect(discoveredNames(configured)).toContain("case-skill");
+    expect(warn).not.toHaveBeenCalled();
+  },
+);
+
+it.runIf(process.platform === "linux")("keeps separately cased workspace roots distinct", async () => {
+  const workspace = await fixture.createDir("CaseWorkspace");
+  const other = path.join(path.dirname(workspace), path.basename(workspace).toLowerCase());
+  await fs.mkdir(other);
+  await skill(path.join(workspace, "skills", "upper-skill"), "upper-skill");
+  await skill(path.join(other, "skills", "lower-skill"), "lower-skill");
+
+  expect(discoveredNames(workspace)).toEqual(["upper-skill"]);
+  expect(discoveredNames(other)).toEqual(["lower-skill"]);
+});
+
 it("rejects hardlinked workspace skills while preserving ordinary files", async () => {
   const workspace = await newDir();
   const skillRoot = path.join(workspace, "skills");

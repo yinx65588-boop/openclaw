@@ -1,0 +1,58 @@
+name: Skills macOS casing baseline
+on:
+  push:
+    branches: [proof/small-skills-baseline-181107-20261023]
+permissions:
+  contents: read
+jobs:
+  macos:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      OPENCLAW_VITEST_RUNTIME: node
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Demonstrate the discovery regression on a real APFS directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof
+          git rev-parse HEAD > .proof/source.txt
+          set +e
+          pnpm test src/skills/loading/skill-path-containment.test.ts --maxWorkers=1 -t 'workspace spelling differs only in case' --reporter=json --outputFile=.proof/baseline-tests.json > .proof/baseline-tests.log 2>&1
+          result=$?
+          set -e
+          printf '%s\n' "$result" > .proof/baseline-exit.txt
+          cat .proof/baseline-tests.log
+          test "$result" -eq 1
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const report = JSON.parse(fs.readFileSync('.proof/baseline-tests.json', 'utf8'));
+          assert.equal(report.numFailedTests, 1);
+          const test = report.testResults.flatMap(f => f.assertionResults).find(t => t.status === 'failed');
+          assert.ok(test.fullName.includes('workspace spelling differs only in case'));
+          assert.ok(test.failureMessages.join('\n').includes('case-skill'));
+          console.log('Native macOS discovery fails at the skill-loading assertion.');
+          JS
+      - name: Reproduce through the shipped skills command
+        if: ${{ !cancelled() }}
+        run: node .proof/skills-cli-proof.mjs baseline
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: skills-casing-baseline
+          path: |
+            .proof/*.json
+            .proof/*.log
+            .proof/*.txt
+          include-hidden-files: true
