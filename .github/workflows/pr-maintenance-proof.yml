@@ -1,0 +1,42 @@
+name: Custom Responses retention regression
+on:
+  push:
+    branches: [proof/responses-baseline-20261101]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  OPENCLAW_VITEST_RUNTIME: bun
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 47cb40a3b3f0d74a3e78ec95076a365d5b75d1ee
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Apply regressions without production repair
+        run: |
+          mkdir -p .proof
+          printf '%s' 'ZGlmZiAtLWdpdCBhL3NyYy9hZ2VudHMvZW1iZWRkZWQtYWdlbnQtcnVubmVyL3J1bi9hdHRlbXB0LXByb21wdC1zdWJtaXQucnVudGltZS1yZXBsYXkudGVzdC50cyBiL3NyYy9hZ2VudHMvZW1iZWRkZWQtYWdlbnQtcnVubmVyL3J1bi9hdHRlbXB0LXByb21wdC1zdWJtaXQucnVudGltZS1yZXBsYXkudGVzdC50cwppbmRleCBkNmJkZDQ3MzEuLjgwNDE2MDQ1ZCAxMDA2NDQKLS0tIGEvc3JjL2FnZW50cy9lbWJlZGRlZC1hZ2VudC1ydW5uZXIvcnVuL2F0dGVtcHQtcHJvbXB0LXN1Ym1pdC5ydW50aW1lLXJlcGxheS50ZXN0LnRzCisrKyBiL3NyYy9hZ2VudHMvZW1iZWRkZWQtYWdlbnQtcnVubmVyL3J1bi9hdHRlbXB0LXByb21wdC1zdWJtaXQucnVudGltZS1yZXBsYXkudGVzdC50cwpAQCAtMzAsNiArMzAsOCBAQCBpdC5lYWNoKFsKICAgeyBuYW1lOiAidHJhbnNpZW50IG92ZXJyaWRlIiwgYXBpOiAib3BlbmFpLWNvbXBsZXRpb25zIiwgb3ZlcnJpZGU6IGZhbHNlLCByZXRhaW5lZDogZmFsc2UgfSwKICAgeyBuYW1lOiAicmV0YWluZWQgb3ZlcnJpZGUiLCBhcGk6ICJvcGVuYWktY29tcGxldGlvbnMiLCBvdmVycmlkZTogdHJ1ZSwgcmV0YWluZWQ6IHRydWUgfSwKICAgeyBuYW1lOiAiZ2VuZXJpYyBjb21wbGV0aW9ucyIsIGFwaTogIm9wZW5haS1jb21wbGV0aW9ucyIsIHJldGFpbmVkOiB0cnVlIH0sCisgIHsgbmFtZTogImdlbmVyaWMgUmVzcG9uc2VzIiwgYXBpOiAib3BlbmFpLXJlc3BvbnNlcyIsIHJldGFpbmVkOiB0cnVlIH0sCisgIHsgbmFtZTogInRyYW5zaWVudCBSZXNwb25zZXMgb3ZlcnJpZGUiLCBhcGk6ICJvcGVuYWktcmVzcG9uc2VzIiwgb3ZlcnJpZGU6IGZhbHNlLCByZXRhaW5lZDogZmFsc2UgfSwKICAgeyBuYW1lOiAibmF0aXZlIE9sbGFtYSIsIGFwaTogIm9sbGFtYSIsIHJldGFpbmVkOiB0cnVlIH0sCiAgIHsKICAgICBuYW1lOiAic3VwcHJlc3Mtb25seSBzeW50aGV0aWMgaW5wdXQiLApkaWZmIC0tZ2l0IGEvc3JjL2FnZW50cy90cmFuc2NyaXB0LXBvbGljeS50ZXN0LnRzIGIvc3JjL2FnZW50cy90cmFuc2NyaXB0LXBvbGljeS50ZXN0LnRzCmluZGV4IDQ4ZjQ2OTc0MC4uNzAwYzQyNGNlIDEwMDY0NAotLS0gYS9zcmMvYWdlbnRzL3RyYW5zY3JpcHQtcG9saWN5LnRlc3QudHMKKysrIGIvc3JjL2FnZW50cy90cmFuc2NyaXB0LXBvbGljeS50ZXN0LnRzCkBAIC0xNTcsNyArMTU3LDExIEBAIGRlc2NyaWJlKCJyZXNvbHZlVHJhbnNjcmlwdFBvbGljeSIsICgpID0+IHsKICAgICAgICJjdXN0b20tb3BlbmFpLXByb3h5IiwKICAgICAgICJncHQtNS40IiwKICAgICAgICJvcGVuYWktcmVzcG9uc2VzIiwKLSAgICAgIHsgdmFsaWRhdGVBbnRocm9waWNUdXJuczogZmFsc2UsIGRyb3BSZWFzb25pbmdGcm9tSGlzdG9yeTogZmFsc2UgfSwKKyAgICAgIHsKKyAgICAgICAgdmFsaWRhdGVBbnRocm9waWNUdXJuczogZmFsc2UsCisgICAgICAgIGRyb3BSZWFzb25pbmdGcm9tSGlzdG9yeTogZmFsc2UsCisgICAgICAgIGFwcGVuZE9ubHlSdW50aW1lQ29udGV4dDogdHJ1ZSwKKyAgICAgIH0sCiAgICAgXSwKICAgICBbIm9sbGFtYSIsICJsbGFtYTMuMiIsICJvbGxhbWEiLCB7IHByZXNlcnZlU2lnbmF0dXJlczogZmFsc2UsIGFwcGVuZE9ubHlSdW50aW1lQ29udGV4dDogdHJ1ZSB9XSwKICAgICBbCg==' | base64 -d > .proof/tests.patch
+          git apply .proof/tests.patch
+      - name: Record unchanged-source reproduction
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/run-vitest.mjs src/agents/transcript-policy.test.ts src/agents/embedded-agent-runner/run/attempt-prompt-submit.runtime-replay.test.ts --maxWorkers=1 2>&1 | tee .proof/baseline.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: responses-baseline-20261101
+          path: .proof
+          include-hidden-files: true
