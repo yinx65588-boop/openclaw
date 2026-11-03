@@ -1,0 +1,58 @@
+name: Session token field documentation proof
+on:
+  push:
+    branches: [proof/session-token-docs-20261104]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  OPENCLAW_VITEST_RUNTIME: bun
+jobs:
+  docs-and-contracts:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 64b00dd6dd9d9a156f2c11049822c3884bd3b25d
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Apply only the two documentation edits
+        run: |
+          mkdir -p .proof
+          printf '%s' 'ZGlmZiAtLWdpdCBhL2RvY3MvY2xpL3Nlc3Npb25zLm1kIGIvZG9jcy9jbGkvc2Vzc2lvbnMubWQKaW5kZXggMGE1N2M2OGIxZi4uZmNkMWJmZWMxOSAxMDA2NDQKLS0tIGEvZG9jcy9jbGkvc2Vzc2lvbnMubWQKKysrIGIvZG9jcy9jbGkvc2Vzc2lvbnMubWQKQEAgLTExNyw2ICsxMTcsMzEgQEAgc2tpcHBlZC4KIH0KIGBgYAogCisjIyBUb2tlbiBjb3VudHMgYW5kIGZyZXNobmVzcworCitKU09OIHNlc3Npb24gcm93cyBzZXBhcmF0ZSBydW4gYWNjb3VudGluZyBmcm9tIGNvbnRleHQgb2NjdXBhbmN5OgorCit8IEZpZWxkIHwgTWVhbmluZyB8Cit8IC0tLSB8IC0tLSB8Cit8IGBpbnB1dFRva2Vuc2AsIGBvdXRwdXRUb2tlbnNgIHwgQWNjb3VudGluZyBzbmFwc2hvdHMgZm9yIHRoZSBsYXRlc3QgcmVjb3JkZWQgcnVuLCB3aGljaCBjYW4gaW5jbHVkZSBtdWx0aXBsZSBtb2RlbCBjYWxscy4gfAorfCBgdG90YWxUb2tlbnNgIHwgVGhlIHJlY29yZGVkIGNvbnRleHQtdXNhZ2Ugc25hcHNob3QsIG5vdCBgaW5wdXRUb2tlbnMgKyBvdXRwdXRUb2tlbnNgLiBBIHN0YWxlIHNuYXBzaG90IGNhbiByZW1haW4gdmlzaWJsZTsgYSBtaXNzaW5nIGNvdW50IGlzIGBudWxsYC4gfAorfCBgdG90YWxUb2tlbnNGcmVzaGAgfCBXaGV0aGVyIHRoZSByZWNvcmRlZCBjb250ZXh0IHNuYXBzaG90IGhhcyB2YWxpZCBmcmVzaG5lc3MgcHJvdmVuYW5jZSBhbmQgdXNlcyB0aGUgY3VycmVudCBhY2NvdW50aW5nIHZlcnNpb24uIHwKK3wgYGNvbnRleHRUb2tlbnNgIHwgVGhlIHJlc29sdmVkIGNvbnRleHQgY2FwYWNpdHkgdXNlZCBhcyB0aGUgdXRpbGl6YXRpb24gZGVub21pbmF0b3IsIG9yIGBudWxsYCB3aGVuIHVua25vd24uIHwKKworUG9sbGluZyBkb2VzIG5vdCByZWZyZXNoIHRoZSBydW4tYWNjb3VudGluZyBzbmFwc2hvdHMuIGBpbnB1dFRva2Vuc2AgYW5kCitgb3V0cHV0VG9rZW5zYCBjYW4gcmVtYWluIHVuY2hhbmdlZCBmb3IgaG91cnMgb24gYW4gaWRsZSBzZXNzaW9uIGFuZCBtdXN0IG5vdCBiZQordXNlZCBhcyBsaXZlIGNvbnRleHQtcHJlc3N1cmUgbWVhc3VyZW1lbnRzLiBgdG90YWxUb2tlbnNGcmVzaDogdHJ1ZWAgZGVzY3JpYmVzCit0aGUgdmFsaWRpdHkgb2YgdGhlIHJlY29yZGVkIGNvbnRleHQgc25hcHNob3QsIG5vdCB3aGV0aGVyIHRoZSBzZXNzaW9uIGlzIGFjdGl2ZQorb3IgdGhlIGNvdW50IHdhcyBzYW1wbGVkIGR1cmluZyB0aGlzIHBvbGwuCisKK0ZvciBjb250ZXh0IHByZXNzdXJlLCB1c2UgYHRvdGFsVG9rZW5zIC8gY29udGV4dFRva2Vuc2Agb25seSB3aGVuCitgdG90YWxUb2tlbnNGcmVzaGAgaXMgYHRydWVgIGFuZCBgY29udGV4dFRva2Vuc2AgaXMga25vd24gYW5kIHBvc2l0aXZlLiBPdGhlcndpc2UsCit0cmVhdCB1dGlsaXphdGlvbiBhcyB1bmtub3duLiBBcHBseSBhbiBhY3Rpdml0eSBmaWx0ZXIgc2VwYXJhdGVseSB3aGVuIGRlY2lkaW5nCit3aGV0aGVyIHRvIGFsZXJ0IG9uIGlkbGUgc2Vzc2lvbnM7IGAtLWFjdGl2ZSA8bWludXRlcz5gIGZpbHRlcnMgbGlzdGluZyBhY3Rpdml0eS4KKworU2VlIHRoZSBbc2Vzc2lvbiBzdG9yZSBzY2hlbWFdKC9yZWZlcmVuY2Uvc2Vzc2lvbi1tYW5hZ2VtZW50LWNvbXBhY3Rpb24vc2NoZW1hI3Nlc3Npb24tc3RvcmUtc2NoZW1hKQorZm9yIHRoZSBzdG9yZWQgZmllbGRzIGFuZCBmcmVzaG5lc3MgcHJvdmVuYW5jZS4KKwogIyMgSW1wb3J0IHRyYW5zY3JpcHRzCiAKIFByZXNlcnZlIG5hdGl2ZSBzZXNzaW9uIGNhdGFsb2cgdHJhbnNjcmlwdHMgaW4gdGhlIHJ1bm5pbmcgR2F0ZXdheSdzIGR1cmFibGUKZGlmZiAtLWdpdCBhL2RvY3MvcmVmZXJlbmNlL3Nlc3Npb24tbWFuYWdlbWVudC1jb21wYWN0aW9uL3NjaGVtYS5tZCBiL2RvY3MvcmVmZXJlbmNlL3Nlc3Npb24tbWFuYWdlbWVudC1jb21wYWN0aW9uL3NjaGVtYS5tZAppbmRleCBmNzg3ZDUwNzg4Li42YWFmZTM2YTc4IDEwMDY0NAotLS0gYS9kb2NzL3JlZmVyZW5jZS9zZXNzaW9uLW1hbmFnZW1lbnQtY29tcGFjdGlvbi9zY2hlbWEubWQKKysrIGIvZG9jcy9yZWZlcmVuY2Uvc2Vzc2lvbi1tYW5hZ2VtZW50LWNvbXBhY3Rpb24vc2NoZW1hLm1kCkBAIC01NCwxMCArNTQsMTggQEAgVGhlIHJ1bnRpbWUgc3RvcmUga2VlcHMgYFNlc3Npb25FbnRyeWAgdmFsdWVzIGluIHBlci1hZ2VudCBTUUxpdGUuIFRoZSB2YWx1ZSB0eXAKIC0gYHN1YmplY3RgLCBgZ3JvdXBDaGFubmVsYCwgYHNwYWNlYCwgYGRpc3BsYXlOYW1lYDogZ3JvdXAvY2hhbm5lbCBsYWJlbGluZyBtZXRhZGF0YTsgYGRpc3BsYXlOYW1lYCBhbHNvIHN0b3JlcyBnZW5lcmF0ZWQgY29udmVyc2F0aW9uIHRpdGxlcy4KIC0gVG9nZ2xlczogYHRoaW5raW5nTGV2ZWxgLCBgdmVyYm9zZUxldmVsYCwgYHJlYXNvbmluZ0xldmVsYCwgYGVsZXZhdGVkTGV2ZWxgLCBgc2VuZFBvbGljeWAgKHBlci1zZXNzaW9uIG92ZXJyaWRlKQogLSBNb2RlbCBzZWxlY3Rpb246IGBwcm92aWRlck92ZXJyaWRlYCwgYG1vZGVsT3ZlcnJpZGVgLCBgYXV0aFByb2ZpbGVPdmVycmlkZWAKLS0gVG9rZW4gY291bnRlcnMgKGJlc3QtZWZmb3J0L3Byb3ZpZGVyLWRlcGVuZGVudCk6IGBpbnB1dFRva2Vuc2AsIGBvdXRwdXRUb2tlbnNgLCBgdG90YWxUb2tlbnNgLCBgY29udGV4dFRva2Vuc2AKKy0gUnVuIGFjY291bnRpbmcgKGJlc3QtZWZmb3J0L3Byb3ZpZGVyLWRlcGVuZGVudCk6IGBpbnB1dFRva2Vuc2AgYW5kIGBvdXRwdXRUb2tlbnNgIGFyZSBzbmFwc2hvdHMgZm9yIHRoZSBsYXRlc3QgcmVjb3JkZWQgcnVuLCB3aGljaCBjYW4gaW5jbHVkZSBtdWx0aXBsZSBtb2RlbCBjYWxscy4KKy0gQ29udGV4dCBvY2N1cGFuY3k6IGB0b3RhbFRva2Vuc2AgaXMgYSBzZXBhcmF0ZSBjb250ZXh0LXVzYWdlIHNuYXBzaG90OyBgY29udGV4dFRva2Vuc2AgaXMgdGhlIHJlc29sdmVkIGNhcGFjaXR5LCBub3QgYSB1c2FnZSBjb3VudC4KKy0gQ29udGV4dCBmcmVzaG5lc3M6IHN0b3JlZCBgdG90YWxUb2tlbnNGcmVzaGAgbXVzdCBiZSBgdHJ1ZWAgYW5kIGB0b3RhbFRva2Vuc1ZlcnNpb25gIG11c3QgbWF0Y2ggdGhlIGN1cnJlbnQgYWNjb3VudGluZyB2ZXJzaW9uIGZvciB0aGUgc25hcHNob3QgdG8gYmUgY29uc2lkZXJlZCBmcmVzaC4KIC0gYGNvbXBhY3Rpb25Db3VudGA6IHRvdGFsIG51bWJlciBvZiBjb21wbGV0ZWQgY29tcGFjdGlvbnMgZm9yIHRoaXMgc2Vzc2lvbiBrZXkKIC0gYG1lbW9yeUZsdXNoQXRgIC8gYG1lbW9yeUZsdXNoQ29tcGFjdGlvbkNvdW50YDogdGltZXN0YW1wIGFuZCBjb21wYWN0aW9uIGNvdW50IG9mIHRoZSBsYXN0IHByZS1jb21wYWN0aW9uIG1lbW9yeSBmbHVzaAogCitSdW4gYWNjb3VudGluZyBkb2VzIG5vdCBiZWNvbWUgYSBsaXZlIGNvbnRleHQgZXN0aW1hdGUgd2hlbiBhIHNlc3Npb24gaXMgaWRsZSBvcgoraXRzIHJvdyBpcyByZWFkLiBUaGUgQ0xJIGRlcml2ZXMgaXRzIEpTT04gYHRvdGFsVG9rZW5zRnJlc2hgIGZyb20gdGhlIHN0b3JlZAorZnJlc2huZXNzIGFuZCB2ZXJzaW9uIGNoZWNrczsgdGhpcyBpcyBub3QgYSB3YWxsLWNsb2NrIGFjdGl2aXR5IG1hcmtlci4gVXNlIHRoZQorW0NMSSB0b2tlbi1maWVsZCBndWlkYW5jZV0oL2NsaS9zZXNzaW9ucyN0b2tlbi1jb3VudHMtYW5kLWZyZXNobmVzcykgd2hlbiBlc3RpbWF0aW5nCitjb250ZXh0IHByZXNzdXJlIGZyb20gc2Vzc2lvbiBKU09OLgorCiBFeGlzdGluZyBsYWJlbC1vbmx5IHJlY29yZHMgYXJlIHByZXNlcnZlZDogdGhlIEdhdGV3YXkgZG9lcyBub3QgaW5mZXIgd2hldGhlciBhCiBzYXZlZCBgbGFiZWxgIHdhcyBhdXRvbWF0aWMgZnJvbSBpdHMgdGV4dC4gQ2xlYXIgb3IgcmVwbGFjZSBpdCBleHBsaWNpdGx5IHRvCiBjaGFuZ2UgaXRzIHByZWNlZGVuY2UuIEFuIG9sZGVyIEdhdGV3YXkgdGhhdCBkb2VzIG5vdCBzdXBwb3J0IGBhdXRvTGFiZWxgIHJlamVjdHMK' | base64 -d > .proof/input.patch
+          git apply --index .proof/input.patch
+          git rev-parse HEAD > .proof/source-base.txt
+      - name: Canonical formatting and final input capture
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm exec oxfmt --write --threads=1 --config .oxfmtrc.jsonc docs/cli/sessions.md docs/reference/session-management-compaction/schema.md 2>&1 | tee .proof/format.log
+          git diff HEAD --binary > .proof/tested.patch
+          mkdir -p .proof/formatted/docs/cli .proof/formatted/docs/reference/session-management-compaction
+          cp docs/cli/sessions.md .proof/formatted/docs/cli/
+          cp docs/reference/session-management-compaction/schema.md .proof/formatted/docs/reference/session-management-compaction/
+          sha256sum docs/cli/sessions.md docs/reference/session-management-compaction/schema.md > .proof/source-hashes.txt
+      - name: Documentation validation
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/ci-collect-checks.sh 'pnpm format:docs:check' 'pnpm check:docs:content' 'pnpm docs:check-links:anchors' 2>&1 | tee .proof/docs.log
+      - name: Existing accounting, context validity and sessions JSON contracts
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/run-vitest.mjs src/commands/sessions.test.ts src/auto-reply/reply/session-usage.test.ts src/config/sessions/context-token-provenance.test.ts --maxWorkers=1 2>&1 | tee .proof/contracts.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: session-token-docs-20261104
+          path: .proof/
+          include-hidden-files: true
