@@ -1,0 +1,84 @@
+name: Session token docs contracts and anchor comparison
+on:
+  push:
+    branches: [proof/session-token-docs-followup-20261104]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  OPENCLAW_VITEST_RUNTIME: bun
+jobs:
+  contracts:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 64b00dd6dd9d9a156f2c11049822c3884bd3b25d
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Preserve unchanged-source anchor findings and original exit
+        shell: bash
+        run: |
+          mkdir -p .proof
+          set +e
+          pnpm docs:check-links:anchors > .proof/anchors-baseline.log 2>&1
+          status=$?
+          set -e
+          printf '%s\n' "$status" > .proof/anchors-baseline.exit
+          cat .proof/anchors-baseline.log
+      - name: Apply the frozen formatted documentation patch
+        run: |
+          printf '%s' 'ZGlmZiAtLWdpdCBhL2RvY3MvY2xpL3Nlc3Npb25zLm1kIGIvZG9jcy9jbGkvc2Vzc2lvbnMubWQKaW5kZXggMGE1N2M2OGIxZi4uZTJkNzhkNWFlYSAxMDA2NDQKLS0tIGEvZG9jcy9jbGkvc2Vzc2lvbnMubWQKKysrIGIvZG9jcy9jbGkvc2Vzc2lvbnMubWQKQEAgLTExNyw2ICsxMTcsMzEgQEAgc2tpcHBlZC4KIH0KIGBgYAogCisjIyBUb2tlbiBjb3VudHMgYW5kIGZyZXNobmVzcworCitKU09OIHNlc3Npb24gcm93cyBzZXBhcmF0ZSBydW4gYWNjb3VudGluZyBmcm9tIGNvbnRleHQgb2NjdXBhbmN5OgorCit8IEZpZWxkICAgICAgICAgICAgICAgICAgICAgICAgIHwgTWVhbmluZyAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfAorfCAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLSB8IC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tIHwKK3wgYGlucHV0VG9rZW5zYCwgYG91dHB1dFRva2Vuc2AgfCBBY2NvdW50aW5nIHNuYXBzaG90cyBmb3IgdGhlIGxhdGVzdCByZWNvcmRlZCBydW4sIHdoaWNoIGNhbiBpbmNsdWRlIG11bHRpcGxlIG1vZGVsIGNhbGxzLiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICB8Cit8IGB0b3RhbFRva2Vuc2AgICAgICAgICAgICAgICAgIHwgVGhlIHJlY29yZGVkIGNvbnRleHQtdXNhZ2Ugc25hcHNob3QsIG5vdCBgaW5wdXRUb2tlbnMgKyBvdXRwdXRUb2tlbnNgLiBBIHN0YWxlIHNuYXBzaG90IGNhbiByZW1haW4gdmlzaWJsZTsgYSBtaXNzaW5nIGNvdW50IGlzIGBudWxsYC4gfAorfCBgdG90YWxUb2tlbnNGcmVzaGAgICAgICAgICAgICB8IFdoZXRoZXIgdGhlIHJlY29yZGVkIGNvbnRleHQgc25hcHNob3QgaGFzIHZhbGlkIGZyZXNobmVzcyBwcm92ZW5hbmNlIGFuZCB1c2VzIHRoZSBjdXJyZW50IGFjY291bnRpbmcgdmVyc2lvbi4gICAgICAgICAgICAgICAgICAgICAgICAgIHwKK3wgYGNvbnRleHRUb2tlbnNgICAgICAgICAgICAgICAgfCBUaGUgcmVzb2x2ZWQgY29udGV4dCBjYXBhY2l0eSB1c2VkIGFzIHRoZSB1dGlsaXphdGlvbiBkZW5vbWluYXRvciwgb3IgYG51bGxgIHdoZW4gdW5rbm93bi4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICB8CisKK1BvbGxpbmcgZG9lcyBub3QgcmVmcmVzaCB0aGUgcnVuLWFjY291bnRpbmcgc25hcHNob3RzLiBgaW5wdXRUb2tlbnNgIGFuZAorYG91dHB1dFRva2Vuc2AgY2FuIHJlbWFpbiB1bmNoYW5nZWQgZm9yIGhvdXJzIG9uIGFuIGlkbGUgc2Vzc2lvbiBhbmQgbXVzdCBub3QgYmUKK3VzZWQgYXMgbGl2ZSBjb250ZXh0LXByZXNzdXJlIG1lYXN1cmVtZW50cy4gYHRvdGFsVG9rZW5zRnJlc2g6IHRydWVgIGRlc2NyaWJlcwordGhlIHZhbGlkaXR5IG9mIHRoZSByZWNvcmRlZCBjb250ZXh0IHNuYXBzaG90LCBub3Qgd2hldGhlciB0aGUgc2Vzc2lvbiBpcyBhY3RpdmUKK29yIHRoZSBjb3VudCB3YXMgc2FtcGxlZCBkdXJpbmcgdGhpcyBwb2xsLgorCitGb3IgY29udGV4dCBwcmVzc3VyZSwgdXNlIGB0b3RhbFRva2VucyAvIGNvbnRleHRUb2tlbnNgIG9ubHkgd2hlbgorYHRvdGFsVG9rZW5zRnJlc2hgIGlzIGB0cnVlYCBhbmQgYGNvbnRleHRUb2tlbnNgIGlzIGtub3duIGFuZCBwb3NpdGl2ZS4gT3RoZXJ3aXNlLAordHJlYXQgdXRpbGl6YXRpb24gYXMgdW5rbm93bi4gQXBwbHkgYW4gYWN0aXZpdHkgZmlsdGVyIHNlcGFyYXRlbHkgd2hlbiBkZWNpZGluZword2hldGhlciB0byBhbGVydCBvbiBpZGxlIHNlc3Npb25zOyBgLS1hY3RpdmUgPG1pbnV0ZXM+YCBmaWx0ZXJzIGxpc3RpbmcgYWN0aXZpdHkuCisKK1NlZSB0aGUgW3Nlc3Npb24gc3RvcmUgc2NoZW1hXSgvcmVmZXJlbmNlL3Nlc3Npb24tbWFuYWdlbWVudC1jb21wYWN0aW9uL3NjaGVtYSNzZXNzaW9uLXN0b3JlLXNjaGVtYSkKK2ZvciB0aGUgc3RvcmVkIGZpZWxkcyBhbmQgZnJlc2huZXNzIHByb3ZlbmFuY2UuCisKICMjIEltcG9ydCB0cmFuc2NyaXB0cwogCiBQcmVzZXJ2ZSBuYXRpdmUgc2Vzc2lvbiBjYXRhbG9nIHRyYW5zY3JpcHRzIGluIHRoZSBydW5uaW5nIEdhdGV3YXkncyBkdXJhYmxlCmRpZmYgLS1naXQgYS9kb2NzL3JlZmVyZW5jZS9zZXNzaW9uLW1hbmFnZW1lbnQtY29tcGFjdGlvbi9zY2hlbWEubWQgYi9kb2NzL3JlZmVyZW5jZS9zZXNzaW9uLW1hbmFnZW1lbnQtY29tcGFjdGlvbi9zY2hlbWEubWQKaW5kZXggZjc4N2Q1MDc4OC4uNmFhZmUzNmE3OCAxMDA2NDQKLS0tIGEvZG9jcy9yZWZlcmVuY2Uvc2Vzc2lvbi1tYW5hZ2VtZW50LWNvbXBhY3Rpb24vc2NoZW1hLm1kCisrKyBiL2RvY3MvcmVmZXJlbmNlL3Nlc3Npb24tbWFuYWdlbWVudC1jb21wYWN0aW9uL3NjaGVtYS5tZApAQCAtNTQsMTAgKzU0LDE4IEBAIFRoZSBydW50aW1lIHN0b3JlIGtlZXBzIGBTZXNzaW9uRW50cnlgIHZhbHVlcyBpbiBwZXItYWdlbnQgU1FMaXRlLiBUaGUgdmFsdWUgdHlwCiAtIGBzdWJqZWN0YCwgYGdyb3VwQ2hhbm5lbGAsIGBzcGFjZWAsIGBkaXNwbGF5TmFtZWA6IGdyb3VwL2NoYW5uZWwgbGFiZWxpbmcgbWV0YWRhdGE7IGBkaXNwbGF5TmFtZWAgYWxzbyBzdG9yZXMgZ2VuZXJhdGVkIGNvbnZlcnNhdGlvbiB0aXRsZXMuCiAtIFRvZ2dsZXM6IGB0aGlua2luZ0xldmVsYCwgYHZlcmJvc2VMZXZlbGAsIGByZWFzb25pbmdMZXZlbGAsIGBlbGV2YXRlZExldmVsYCwgYHNlbmRQb2xpY3lgIChwZXItc2Vzc2lvbiBvdmVycmlkZSkKIC0gTW9kZWwgc2VsZWN0aW9uOiBgcHJvdmlkZXJPdmVycmlkZWAsIGBtb2RlbE92ZXJyaWRlYCwgYGF1dGhQcm9maWxlT3ZlcnJpZGVgCi0tIFRva2VuIGNvdW50ZXJzIChiZXN0LWVmZm9ydC9wcm92aWRlci1kZXBlbmRlbnQpOiBgaW5wdXRUb2tlbnNgLCBgb3V0cHV0VG9rZW5zYCwgYHRvdGFsVG9rZW5zYCwgYGNvbnRleHRUb2tlbnNgCistIFJ1biBhY2NvdW50aW5nIChiZXN0LWVmZm9ydC9wcm92aWRlci1kZXBlbmRlbnQpOiBgaW5wdXRUb2tlbnNgIGFuZCBgb3V0cHV0VG9rZW5zYCBhcmUgc25hcHNob3RzIGZvciB0aGUgbGF0ZXN0IHJlY29yZGVkIHJ1biwgd2hpY2ggY2FuIGluY2x1ZGUgbXVsdGlwbGUgbW9kZWwgY2FsbHMuCistIENvbnRleHQgb2NjdXBhbmN5OiBgdG90YWxUb2tlbnNgIGlzIGEgc2VwYXJhdGUgY29udGV4dC11c2FnZSBzbmFwc2hvdDsgYGNvbnRleHRUb2tlbnNgIGlzIHRoZSByZXNvbHZlZCBjYXBhY2l0eSwgbm90IGEgdXNhZ2UgY291bnQuCistIENvbnRleHQgZnJlc2huZXNzOiBzdG9yZWQgYHRvdGFsVG9rZW5zRnJlc2hgIG11c3QgYmUgYHRydWVgIGFuZCBgdG90YWxUb2tlbnNWZXJzaW9uYCBtdXN0IG1hdGNoIHRoZSBjdXJyZW50IGFjY291bnRpbmcgdmVyc2lvbiBmb3IgdGhlIHNuYXBzaG90IHRvIGJlIGNvbnNpZGVyZWQgZnJlc2guCiAtIGBjb21wYWN0aW9uQ291bnRgOiB0b3RhbCBudW1iZXIgb2YgY29tcGxldGVkIGNvbXBhY3Rpb25zIGZvciB0aGlzIHNlc3Npb24ga2V5CiAtIGBtZW1vcnlGbHVzaEF0YCAvIGBtZW1vcnlGbHVzaENvbXBhY3Rpb25Db3VudGA6IHRpbWVzdGFtcCBhbmQgY29tcGFjdGlvbiBjb3VudCBvZiB0aGUgbGFzdCBwcmUtY29tcGFjdGlvbiBtZW1vcnkgZmx1c2gKIAorUnVuIGFjY291bnRpbmcgZG9lcyBub3QgYmVjb21lIGEgbGl2ZSBjb250ZXh0IGVzdGltYXRlIHdoZW4gYSBzZXNzaW9uIGlzIGlkbGUgb3IKK2l0cyByb3cgaXMgcmVhZC4gVGhlIENMSSBkZXJpdmVzIGl0cyBKU09OIGB0b3RhbFRva2Vuc0ZyZXNoYCBmcm9tIHRoZSBzdG9yZWQKK2ZyZXNobmVzcyBhbmQgdmVyc2lvbiBjaGVja3M7IHRoaXMgaXMgbm90IGEgd2FsbC1jbG9jayBhY3Rpdml0eSBtYXJrZXIuIFVzZSB0aGUKK1tDTEkgdG9rZW4tZmllbGQgZ3VpZGFuY2VdKC9jbGkvc2Vzc2lvbnMjdG9rZW4tY291bnRzLWFuZC1mcmVzaG5lc3MpIHdoZW4gZXN0aW1hdGluZworY29udGV4dCBwcmVzc3VyZSBmcm9tIHNlc3Npb24gSlNPTi4KKwogRXhpc3RpbmcgbGFiZWwtb25seSByZWNvcmRzIGFyZSBwcmVzZXJ2ZWQ6IHRoZSBHYXRld2F5IGRvZXMgbm90IGluZmVyIHdoZXRoZXIgYQogc2F2ZWQgYGxhYmVsYCB3YXMgYXV0b21hdGljIGZyb20gaXRzIHRleHQuIENsZWFyIG9yIHJlcGxhY2UgaXQgZXhwbGljaXRseSB0bwogY2hhbmdlIGl0cyBwcmVjZWRlbmNlLiBBbiBvbGRlciBHYXRld2F5IHRoYXQgZG9lcyBub3Qgc3VwcG9ydCBgYXV0b0xhYmVsYCByZWplY3RzCg==' | base64 -d > .proof/candidate.patch
+          git apply --index .proof/candidate.patch
+          git diff HEAD --binary > .proof/tested.patch
+          sha256sum docs/cli/sessions.md docs/reference/session-management-compaction/schema.md > .proof/source-hashes.txt
+      - name: Verify new anchors add no inherited-error changes
+        shell: bash
+        run: |
+          set +e
+          pnpm docs:check-links:anchors > .proof/anchors-candidate.log 2>&1
+          status=$?
+          set -e
+          printf '%s\n' "$status" > .proof/anchors-candidate.exit
+          cat .proof/anchors-candidate.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path('.proof')
+          before = (root/'anchors-baseline.log').read_text()
+          after = (root/'anchors-candidate.log').read_text()
+          before_exit = (root/'anchors-baseline.exit').read_text().strip()
+          after_exit = (root/'anchors-candidate.exit').read_text().strip()
+          assert before_exit == after_exit == '1', (before_exit,after_exit)
+          before_checked = int(re.search(r'checked_internal_links=(\d+)',before)[1])
+          after_checked = int(re.search(r'checked_internal_links=(\d+)',after)[1])
+          assert after_checked == before_checked + 2, (before_checked,after_checked)
+          normalize = lambda text: re.sub(r'checked_internal_links=\d+', 'checked_internal_links=<count>', text)
+          assert normalize(before) == normalize(after), 'Anchor findings changed; inspect both raw outputs'
+          print(f'Baseline and candidate retain identical findings and original exits; {after_checked-before_checked} new links checked without new errors.')
+          PY
+      - name: Validate changed-document glossary coverage against the explicit base
+        shell: bash
+        run: |
+          set -o pipefail
+          node --import ./scripts/tsx.mjs scripts/check-docs-i18n-glossary.mts --base 64b00dd6dd9d9a156f2c11049822c3884bd3b25d 2>&1 | tee .proof/glossary.log
+      - name: Existing accounting, context validity and sessions JSON contracts
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/run-vitest.mjs src/commands/sessions.test.ts src/auto-reply/reply/session-usage.test.ts src/config/sessions/context-token-provenance.test.ts --maxWorkers=1 2>&1 | tee .proof/contracts.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: session-token-docs-followup-20261104
+          path: .proof/
+          include-hidden-files: true
