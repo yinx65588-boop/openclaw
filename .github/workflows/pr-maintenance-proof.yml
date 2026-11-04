@@ -1,0 +1,64 @@
+name: Session conflict HTTP baseline
+on:
+  push:
+    branches: [proof/session-conflict-baseline-20261104]
+permissions:
+  contents: read
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  OPENCLAW_VITEST_RUNTIME: bun
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ca4cf041fc3b0f2d2bd6d39ecdfbe8899f9e5754
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Apply regression tests only and capture formatted source
+        run: |
+          mkdir -p .proof/formatted/src/gateway
+          printf '%s' 'ZGlmZiAtLWdpdCBhL3NyYy9nYXRld2F5L29wZW5haS1jb21wYXRpYmxlLWFnZW50LXJ1bi50ZXN0LnRzIGIvc3JjL2dhdGV3YXkvb3BlbmFpLWNvbXBhdGlibGUtYWdlbnQtcnVuLnRlc3QudHMKaW5kZXggMjIwOGNmNzAwZC4uOWJjYWQzMDA0NSAxMDA2NDQKLS0tIGEvc3JjL2dhdGV3YXkvb3BlbmFpLWNvbXBhdGlibGUtYWdlbnQtcnVuLnRlc3QudHMKKysrIGIvc3JjL2dhdGV3YXkvb3BlbmFpLWNvbXBhdGlibGUtYWdlbnQtcnVuLnRlc3QudHMKQEAgLTksNiArOSwxMCBAQCBpbXBvcnQgewogaW1wb3J0IHsgRmFpbG92ZXJFcnJvciB9IGZyb20gIi4uL2FnZW50cy9mYWlsb3Zlci1lcnJvci5qcyI7CiBpbXBvcnQgeyBhZ2VudENvbW1hbmRGcm9tR2F0ZXdheUluZ3Jlc3MgfSBmcm9tICIuLi9jb21tYW5kcy9hZ2VudC5qcyI7CiBpbXBvcnQgeyBzZXRSdW50aW1lQ29uZmlnU25hcHNob3QgfSBmcm9tICIuLi9jb25maWcvcnVudGltZS1zbmFwc2hvdC5qcyI7CitpbXBvcnQgeworICBTZXNzaW9uV29ya1N0YXJ0Q2hhbmdlZEVycm9yLAorICBTZXNzaW9uV29ya1N0YXJ0SW52YWxpZGF0ZWRFcnJvciwKK30gZnJvbSAiLi4vY29uZmlnL3Nlc3Npb25zL3dvcmstc3RhcnQtZXJyb3IuanMiOwogaW1wb3J0IHR5cGUgeyBPcGVuQ2xhd0NvbmZpZyB9IGZyb20gIi4uL2NvbmZpZy90eXBlcy5vcGVuY2xhdy5qcyI7CiBpbXBvcnQgeyBjcmVhdGVBYm9ydEVycm9yIH0gZnJvbSAiLi4vaW5mcmEvYWJvcnQtc2lnbmFsLmpzIjsKIGltcG9ydCAqIGFzIHByb2ZpbGVSZWFkZXIgZnJvbSAiLi4vc3RhdGUvdXNlci1wcm9maWxlLWxpc3QuanMiOwpAQCAtNDE3LDYgKzQyMSwyMiBAQCBkZXNjcmliZSgiT3BlbkFJLWNvbXBhdGlibGUgYWdlbnQgcnVuIHRlcm1pbmFsIG1ldGFkYXRhIiwgKCkgPT4gewogfSk7CiAKIGRlc2NyaWJlKCJPcGVuQUktY29tcGF0aWJsZSBhZ2VudCBlcnJvciBlbnZlbG9wZXMiLCAoKSA9PiB7CisgIGl0LmVhY2goW1Nlc3Npb25Xb3JrU3RhcnRDaGFuZ2VkRXJyb3IsIFNlc3Npb25Xb3JrU3RhcnRJbnZhbGlkYXRlZEVycm9yXSkoCisgICAgInByZXNlcnZlcyAlcyBhcyBhIHNhbml0aXplZCBjb25mbGljdCwgaW5jbHVkaW5nIHNlcmlhbGl6ZWQgZXJyb3JzIiwKKyAgICAoRXJyb3JUeXBlKSA9PiB7CisgICAgICBjb25zdCBlcnJvciA9IG5ldyBFcnJvclR5cGUoJ3ByaXZhdGUgc2Vzc2lvbiAiYWdlbnQ6bWFpbjpwcml2YXRlIiBhdCAvcHJpdmF0ZS9zdGF0ZScpOworICAgICAgZm9yIChjb25zdCBmYWlsdXJlIG9mIFtlcnJvciwgeyBjb2RlOiBlcnJvci5jb2RlLCBtZXNzYWdlOiBlcnJvci5tZXNzYWdlIH1dKSB7CisgICAgICAgIGV4cGVjdChyZXNvbHZlT3BlbkFpQ29tcGF0aWJsZUFnZW50RXJyb3IoZmFpbHVyZSkpLnRvRXF1YWwoeworICAgICAgICAgIHN0YXR1czogNDA5LAorICAgICAgICAgIGVycm9yOiB7CisgICAgICAgICAgICB0eXBlOiAic2Vzc2lvbl9jb25mbGljdCIsCisgICAgICAgICAgICBtZXNzYWdlOiAiU2Vzc2lvbiB3b3JrIGNvbmZsaWN0ZWQgd2l0aCBhIGNvbmN1cnJlbnQgY2hhbmdlLiBDaGVjayB0aGUgc2Vzc2lvbiBzdGF0ZSBiZWZvcmUgcmV0cnlpbmcuIiwKKyAgICAgICAgICB9LAorICAgICAgICB9KTsKKyAgICAgIH0KKyAgICB9LAorICApOworCiAgIGl0KCJnaXZlcyBjZXJ0aWZpY2F0ZSBmYWlsdXJlIGd1aWRhbmNlIHdoaWxlIHJldGFpbmluZyB0aGUgbmF0aXZlIGRpYWdub3N0aWMgY29kZSIsICgpID0+IHsKICAgICBjb25zdCBlcnJvciA9IG5ldyBGYWlsb3ZlckVycm9yKCJDb25uZWN0aW9uIGVycm9yLiIsIHsKICAgICAgIHJlYXNvbjogInRsc19jZXJ0aWZpY2F0ZSIsCmRpZmYgLS1naXQgYS9zcmMvZ2F0ZXdheS9vcGVuYWktY29tcGF0aWJsZS1hcmNoaXZlZC1zZXNzaW9uLnNlcnZlci50ZXN0LnRzIGIvc3JjL2dhdGV3YXkvb3BlbmFpLWNvbXBhdGlibGUtYXJjaGl2ZWQtc2Vzc2lvbi5zZXJ2ZXIudGVzdC50cwppbmRleCA0OTE2NzI3NTk4Li5lNzRjYzNlMTA5IDEwMDY0NAotLS0gYS9zcmMvZ2F0ZXdheS9vcGVuYWktY29tcGF0aWJsZS1hcmNoaXZlZC1zZXNzaW9uLnNlcnZlci50ZXN0LnRzCisrKyBiL3NyYy9nYXRld2F5L29wZW5haS1jb21wYXRpYmxlLWFyY2hpdmVkLXNlc3Npb24uc2VydmVyLnRlc3QudHMKQEAgLTYsNiArNiwxMCBAQCBpbXBvcnQgewogICB1cHNlcnRTZXNzaW9uRW50cnlDb3JlLAogfSBmcm9tICIuLi9jb25maWcvc2Vzc2lvbnMvc2Vzc2lvbi1hY2Nlc3Nvci5qcyI7CiBpbXBvcnQgeyByZXBsYWNlVHJhbnNjcmlwdEV2ZW50cyB9IGZyb20gIi4uL2NvbmZpZy9zZXNzaW9ucy9zZXNzaW9uLWFjY2Vzc29yLnNxbGl0ZS10cmFuc2NyaXB0LXdyaXRlLnRlc3Qtc3VwcG9ydC5qcyI7CitpbXBvcnQgeworICBTZXNzaW9uV29ya1N0YXJ0Q2hhbmdlZEVycm9yLAorICBTZXNzaW9uV29ya1N0YXJ0SW52YWxpZGF0ZWRFcnJvciwKK30gZnJvbSAiLi4vY29uZmlnL3Nlc3Npb25zL3dvcmstc3RhcnQtZXJyb3IuanMiOwogaW1wb3J0IHsKICAgYWdlbnRDb21tYW5kTW9jaywKICAgZ2V0R2F0ZXdheVRlc3RQb3J0LApAQCAtMzAsNiArMzQsNDEgQEAgYmVmb3JlQWxsKGFzeW5jICgpID0+IHsKIH0pOwogYWZ0ZXJBbGwoYXN5bmMgKCkgPT4gc3RhcnRlZD8uc2VydmVyLmNsb3NlKHsgcmVhc29uOiAiYXJjaGl2ZWQgSFRUUCBzZXNzaW9uIHByb29mIGNvbXBsZXRlIiB9KSk7CiAKK2l0LmVhY2goWyIvdjEvY2hhdC9jb21wbGV0aW9ucyIsICIvdjEvcmVzcG9uc2VzIl0pKAorICAiJXMgcmVwb3J0cyBzZXNzaW9uIGNvbmZsaWN0cyBvdmVyIEpTT04gYW5kIFNTRSB3aXRob3V0IGxlYWtpbmcgaW50ZXJuYWwgZGV0YWlscyIsCisgIGFzeW5jIChlbmRwb2ludCkgPT4geworICAgIGZvciAoY29uc3Qgc3RyZWFtIG9mIFtmYWxzZSwgdHJ1ZV0pIHsKKyAgICAgIGZvciAoY29uc3QgRXJyb3JUeXBlIG9mIFtTZXNzaW9uV29ya1N0YXJ0Q2hhbmdlZEVycm9yLCBTZXNzaW9uV29ya1N0YXJ0SW52YWxpZGF0ZWRFcnJvcl0pIHsKKyAgICAgICAgYWdlbnRDb21tYW5kTW9jay5tb2NrUmVqZWN0ZWRWYWx1ZU9uY2UobmV3IEVycm9yVHlwZSgicHJpdmF0ZS1zZXNzaW9uIC9wcml2YXRlL3N0YXRlIikpOworICAgICAgICBjb25zdCByZXNwb25zZSA9IGF3YWl0IGZldGNoKGBodHRwOi8vMTI3LjAuMC4xOiR7c3RhcnRlZC5wb3J0fSR7ZW5kcG9pbnR9YCwgeworICAgICAgICAgIG1ldGhvZDogIlBPU1QiLAorICAgICAgICAgIGhlYWRlcnM6IHsgImNvbnRlbnQtdHlwZSI6ICJhcHBsaWNhdGlvbi9qc29uIiwgIngtb3BlbmNsYXctc2NvcGVzIjogIm9wZXJhdG9yLndyaXRlIiB9LAorICAgICAgICAgIGJvZHk6IEpTT04uc3RyaW5naWZ5KHsKKyAgICAgICAgICAgIG1vZGVsOiAib3BlbmNsYXciLCBzdHJlYW0sCisgICAgICAgICAgICAuLi4oZW5kcG9pbnQgPT09ICIvdjEvcmVzcG9uc2VzIiA/IHsgaW5wdXQ6ICJyZXN1bWUiIH0gOiB7IG1lc3NhZ2VzOiBbeyByb2xlOiAidXNlciIsIGNvbnRlbnQ6ICJyZXN1bWUiIH1dIH0pLAorICAgICAgICAgIH0pLAorICAgICAgICB9KTsKKyAgICAgICAgZXhwZWN0KHJlc3BvbnNlLnN0YXR1cykudG9CZShzdHJlYW0gPyAyMDAgOiA0MDkpOworICAgICAgICBjb25zdCB0ZXh0ID0gYXdhaXQgcmVzcG9uc2UudGV4dCgpOworICAgICAgICBjb25zdCBmcmFtZXMgPSBzdHJlYW0KKyAgICAgICAgICA/IHRleHQuc3BsaXQoIlxuIikuZmlsdGVyKChsaW5lKSA9PiBsaW5lLnN0YXJ0c1dpdGgoImRhdGE6ICIpICYmICFsaW5lLmluY2x1ZGVzKCJbRE9ORV0iKSkubWFwKChsaW5lKSA9PiBKU09OLnBhcnNlKGxpbmUuc2xpY2UoNikpKQorICAgICAgICAgIDogW0pTT04ucGFyc2UodGV4dCldOworICAgICAgICBjb25zdCBlcnJvcnMgPSBmcmFtZXMuZmxhdE1hcCgoZnJhbWUpID0+IGZyYW1lLmVycm9yID8/IGZyYW1lLnJlc3BvbnNlPy5lcnJvciA/PyBbXSk7CisgICAgICAgIGV4cGVjdChlcnJvcnMpLnRvRXF1YWwoW2V4cGVjdC5vYmplY3RDb250YWluaW5nKHsKKyAgICAgICAgICBtZXNzYWdlOiAiU2Vzc2lvbiB3b3JrIGNvbmZsaWN0ZWQgd2l0aCBhIGNvbmN1cnJlbnQgY2hhbmdlLiBDaGVjayB0aGUgc2Vzc2lvbiBzdGF0ZSBiZWZvcmUgcmV0cnlpbmcuIiwKKyAgICAgICAgfSldKTsKKyAgICAgICAgZXhwZWN0KGVycm9yc1swXS5jb2RlID8/IGVycm9yc1swXS50eXBlKS50b0JlKCJzZXNzaW9uX2NvbmZsaWN0Iik7CisgICAgICAgIGV4cGVjdCh0ZXh0KS5ub3QudG9Db250YWluKCJwcml2YXRlLXNlc3Npb24iKTsKKyAgICAgICAgZXhwZWN0KHRleHQpLm5vdC50b0NvbnRhaW4oIi9wcml2YXRlL3N0YXRlIik7CisgICAgICAgIGlmIChzdHJlYW0gJiYgZW5kcG9pbnQgPT09ICIvdjEvcmVzcG9uc2VzIikgeworICAgICAgICAgIGV4cGVjdChmcmFtZXMuZmlsdGVyKChmcmFtZSkgPT4gZnJhbWUudHlwZSA9PT0gInJlc3BvbnNlLmZhaWxlZCIpKS50b0hhdmVMZW5ndGgoMSk7CisgICAgICAgICAgZXhwZWN0KGZyYW1lcy5zb21lKChmcmFtZSkgPT4gZnJhbWUudHlwZSA9PT0gInJlc3BvbnNlLmNvbXBsZXRlZCIpKS50b0JlKGZhbHNlKTsKKyAgICAgICAgfQorICAgICAgfQorICAgIH0KKyAgfSwKKyk7CisKIGl0LmVhY2goWwogICB7IGVuZHBvaW50OiAiL3YxL2NoYXQvY29tcGxldGlvbnMiLCBpbnB1dDogeyBtZXNzYWdlczogW3sgcm9sZTogInVzZXIiLCBjb250ZW50OiAicmVzdW1lIiB9XSB9IH0sCiAgIHsgZW5kcG9pbnQ6ICIvdjEvcmVzcG9uc2VzIiwgaW5wdXQ6IHsgaW5wdXQ6ICJyZXN1bWUiIH0gfSwK' | base64 -d > .proof/input.patch
+          git apply .proof/input.patch
+          pnpm exec oxfmt --write --threads=1 --config .oxfmtrc.jsonc src/gateway/openai-compatible-agent-run.test.ts src/gateway/openai-compatible-archived-session.server.test.ts
+          cp src/gateway/openai-compatible-agent-run.test.ts src/gateway/openai-compatible-archived-session.server.test.ts .proof/formatted/src/gateway/
+          git diff --binary > .proof/tested.patch
+          git rev-parse HEAD > .proof/source-base.txt
+          sha256sum src/gateway/openai-compat-errors.ts src/gateway/openai-compatible-agent-run.test.ts src/gateway/openai-compatible-archived-session.server.test.ts > .proof/source-hashes.txt
+      - name: Establish four boundary failures and two archived-session controls
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          node scripts/run-vitest.mjs src/gateway/openai-compatible-agent-run.test.ts src/gateway/openai-compatible-archived-session.server.test.ts --maxWorkers=1 -t 'sanitized conflict|reports session conflicts|preserves archived sessions' --reporter=json --outputFile=.proof/baseline.json 2>&1 | tee .proof/baseline.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > .proof/baseline-exit.txt
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('.proof/baseline.json').read_text())
+          assert report['numFailedTests'] == 4, report
+          assert report['numPassedTests'] == 2, report
+          assert Path('.proof/baseline-exit.txt').read_text().strip() == '1'
+          failed = [t for suite in report['testResults'] for t in suite['assertionResults'] if t['status'] == 'failed']
+          assert len(failed) == 4
+          assert all('sanitized conflict' in t['fullName'] or 'reports session conflicts' in t['fullName'] for t in failed)
+          assert all('expected' in '\n'.join(t['failureMessages']).lower() for t in failed)
+          print('Verified: four intended conflict-envelope failures; two archived-session controls pass.')
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: session-conflict-baseline-20261104
+          path: .proof/
+          include-hidden-files: true
