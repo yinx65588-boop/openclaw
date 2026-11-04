@@ -1,0 +1,37 @@
+name: OpenClaw Claude first-turn overflow baseline
+on: push
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - name: Build unchanged OpenClaw runtime and install pinned native child
+        env:
+          OPENCLAW_RUN_NODE_SKIP_DTS_BUILD: "1"
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "ff093b54583eaf3d7fc6b1356b9bac7da2b1d1cf"
+          git diff --exit-code HEAD^ HEAD -- src extensions packages
+          pnpm build
+          npm install --prefix "$RUNNER_TEMP/claude-native" --no-audit --no-fund @anthropic-ai/claude-code@2.1.311
+          "$RUNNER_TEMP/claude-native/node_modules/.bin/claude" --version
+      - name: Run the public CLI twice against an isolated native transcript
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/proof-home"
+          sudo env -i "PATH=$PATH" "HOME=$RUNNER_TEMP/proof-home" \
+            "PROOF_CLAUDE=$RUNNER_TEMP/claude-native/node_modules/.bin/claude" \
+            unshare --net --fork bash -c 'ip link set lo up; runuser -u runner --preserve-environment -- node .proof/claude-openclaw-baseline.mjs'
