@@ -1,0 +1,30 @@
+name: Subagent reload wake current-main controls
+on: push
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 7c2ff8f775acca3e5c93c9c22b6247e37df29bae
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Existing requester wake and gateway reload controls
+        run: |
+          node scripts/run-vitest.mjs \
+            src/agents/subagents/registry/subagent-registry-lifecycle-wake.retry.test.ts \
+            src/gateway/server.plugin-reload-send-continuation.product.test.ts \
+            --maxWorkers=1
