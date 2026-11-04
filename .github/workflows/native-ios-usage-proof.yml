@@ -1,0 +1,180 @@
+name: Native iOS Usage boundary
+on: push
+permissions:
+  contents: read
+jobs:
+  ios:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f7082435226fb194b8bf647e5bec50e9e3b16c40
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: 'off'
+          semantic-checks: 'true'
+      - name: Prepare simulator toolchain
+        run: |
+          set -euo pipefail
+          source scripts/lib/swift-toolchain.sh
+          select_xcode_toolchain
+          tools="$RUNNER_TEMP/native-tools"
+          ./scripts/install-xcodegen.sh "$tools"
+          ./scripts/install-swift-tools.sh "$tools"
+          echo "$tools" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          watch_toolchain="$(awk -F '"' '/^channel =/ {print $2; exit}' apps/shared/OpenClawWatchRTC/rust-toolchain.toml)"
+          rustup toolchain install "$watch_toolchain" --profile minimal --component rust-src
+          xcodebuild -version
+      - name: Build the application and Usage UI test
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("apps/ios/UITests/OpenClawSnapshotUITests.swift")
+          source = p.read_text()
+          marker = "    func testLiveGatewayPairChatAndRelaunch() throws {"
+          assert source.count(marker) == 1
+          method = r'''
+              func testLiveGatewayUsageSummary() throws {
+                  continueAfterFailure = false
+                  _ = try self.launchPairedLiveGatewayApp(initialTab: "chat", initialDestination: "chat")
+                  let app = self.relaunchConnectedLiveGatewayApp(initialTab: "chat", initialDestination: "overview")
+                  let card = app.buttons.matching(NSPredicate(
+                      format: "label CONTAINS[c] %@", "31-day usage")).firstMatch
+                  XCTAssertTrue(card.waitForExistence(timeout: 45), "NATIVE_USAGE_CARD_MISSING")
+                  XCTAssertTrue(card.label.contains("$3.75"), "NATIVE_USAGE_TOTAL_WRONG")
+                  let screenshot = XCTAttachment(screenshot: card.screenshot())
+                  screenshot.name = "native-usage-card"
+                  screenshot.lifetime = .keepAlways
+                  self.add(screenshot)
+              }
+
+          '''
+          p.write_text(source.replace(marker, method + marker))
+          PY
+          pnpm ios:gen
+          xcodebuild -project apps/ios/OpenClaw.xcodeproj -scheme OpenClawUITests \
+            -configuration Debug -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/ios-build" ARCHS=arm64 COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE= PROVISIONING_PROFILE_SPECIFIER= \
+            -parallel-testing-enabled NO \
+            -only-testing:OpenClawUITests/OpenClawSnapshotUITests/testLiveGatewayUsageSummary \
+            build-for-testing > "$RUNNER_TEMP/ios-build.log" 2>&1 || {
+              tail -100 "$RUNNER_TEMP/ios-build.log"
+              exit 1
+            }
+          git diff --exit-code -- apps/ios/Sources apps/shared
+      - name: Install pinned public Gateway
+        run: npm install --prefix "$RUNNER_TEMP/proof-gateway" --no-audit --no-fund openclaw@2026.10.10
+      - name: Verify actual iOS Overview on an isolated Gateway
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/native-usage-proof"
+          cat > scripts/native-ios-usage-proof.mts <<'TS'
+          import assert from "node:assert/strict";
+          import { execFile, execFileSync } from "node:child_process";
+          import { writeFile } from "node:fs/promises";
+          import path from "node:path";
+          import { promisify } from "node:util";
+          import { replaceSessionEntrySync, persistSessionTranscriptTurn } from "../src/config/sessions/session-accessor.js";
+          import { callGateway } from "../src/gateway/call.js";
+          import { createOpenClawTestInstance } from "../test/helpers/openclaw-test-instance.js";
+
+          const root = process.env.RUNNER_TEMP!;
+          const proof = path.join(root, "native-usage-proof");
+          const packageDir = path.join(root, "proof-gateway", "node_modules", "openclaw");
+          const deviceList = JSON.parse(execFileSync("xcrun", ["simctl", "list", "devices", "available", "-j"], { encoding: "utf8" })).devices;
+          const devices = Object.entries(deviceList).filter(([runtime]) => runtime.includes("iOS-27"))
+            .flatMap(([, devices]) => devices as { name: string; udid: string }[]);
+          const device = devices.find((device) => device.name.startsWith("iPhone"));
+          assert(device, "No iOS 27 iPhone simulator");
+          const udid = device.udid;
+          const run = promisify(execFile);
+          await run("xcrun", ["simctl", "boot", udid]).catch(() => {});
+          await run("xcrun", ["simctl", "bootstatus", udid, "-b"]);
+          const fixture = await createOpenClawTestInstance({
+            name: "native-ios-usage",
+            cwd: packageDir,
+            entrypoint: [path.join(packageDir, "openclaw.mjs")],
+            config: { agents: { ownership: "explicit", entries: { alpha: {}, beta: {} } } },
+          });
+          try {
+            process.env.OPENCLAW_STATE_DIR = fixture.stateDir;
+            process.env.OPENCLAW_CONFIG_PATH = fixture.configPath;
+            const now = Date.now();
+            for (const [agentId, cost] of [["alpha", 1.25], ["beta", 2.5]] as const) {
+              const sessionId = `usage-proof-${agentId}`;
+              const target = { agentId, sessionKey: `agent:${agentId}:usage-proof`, sessionId };
+              replaceSessionEntrySync(target, { sessionId, updatedAt: now });
+              await persistSessionTranscriptTurn(target, {
+                cwd: fixture.homeDir,
+                updateMode: "none",
+                messages: [{ now, message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: "Synthetic usage proof." }],
+                  api: "openai-responses", provider: "fixture", model: "usage-model", stopReason: "stop",
+                  timestamp: now,
+                  usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 10,
+                    cost: { input: cost, output: 0, cacheRead: 0, cacheWrite: 0, total: cost } },
+                } }],
+              });
+            }
+            await fixture.startGateway();
+            const gateway = {
+              config: {}, configPath: fixture.configPath, url: fixture.url,
+              token: fixture.gatewayToken, ignoreEnvUrlOverride: true, deviceIdentity: null,
+              sharedStateMode: "read-only" as const, timeoutMs: 30000,
+            };
+            const usage = await callGateway<{ totals: { totalCost: number } }>({
+              ...gateway, method: "usage.cost", params: { agentScope: "all" },
+            });
+            assert.equal(usage.totals.totalCost, 3.75);
+            await assert.rejects(callGateway({ ...gateway, method: "usage.cost", params: {} }), /no explicit owner|select an agent explicitly/i);
+            console.log("Gateway controls passed: alpha $1.25 + beta $2.50 = $3.75; unscoped rejected");
+            const setup = await callGateway<{ setupCode: string }>({
+              ...gateway, method: "device.pair.setupCode", params: { publicUrl: fixture.url, includeQr: false },
+            });
+            assert(setup.setupCode);
+            const result = path.join(root, "native-ios-usage.xcresult");
+            const log = path.join(root, "native-ios-usage.log");
+            const shellArgs = ["-project", "apps/ios/OpenClaw.xcodeproj", "-scheme", "OpenClawUITests",
+              "-configuration", "Debug", "-derivedDataPath", path.join(root, "ios-build"),
+              "-destination", `platform=iOS Simulator,id=${udid}`, "-parallel-testing-enabled", "NO",
+              "-resultBundlePath", result, "-collect-test-diagnostics", "never",
+              "-only-testing:OpenClawUITests/OpenClawSnapshotUITests/testLiveGatewayUsageSummary", "test-without-building"];
+            try {
+              const { stdout } = await run("xcodebuild", shellArgs, { maxBuffer: 32 * 1024 * 1024, timeout: 600000,
+                env: { ...process.env, TEST_RUNNER_OPENCLAW_IOS_LIVE_GATEWAY: "1",
+                  TEST_RUNNER_OPENCLAW_IOS_LIVE_SETUP_CODE: setup.setupCode } });
+              await writeFile(log, stdout);
+              assert.match(stdout, /testLiveGatewayUsageSummary.*passed/);
+            } catch (error) {
+              const output = String((error as {stdout?: string}).stdout ?? "");
+              for (const marker of ["NATIVE_USAGE_CARD_MISSING", "NATIVE_USAGE_TOTAL_WRONG", "failed", "skipped"]) {
+                if (output.includes(marker)) console.log(`Native test result marker: ${marker}`);
+              }
+              throw new Error("Native UI assertions did not pass");
+            }
+            const evidence = { source: "f7082435226fb194b8bf647e5bec50e9e3b16c40",
+              gatewayVersion: "2026.10.10", ownership: "explicit", agents: ["alpha", "beta"],
+              expectedTotalUsd: 3.75, observedIOSOverviewTotalUsd: 3.75, unscopedControl: "rejected" };
+            await writeFile(path.join(proof, "ios-usage.json"), JSON.stringify(evidence, null, 2));
+            console.log(JSON.stringify(evidence));
+          } finally {
+            await fixture.cleanup();
+            await run("xcrun", ["simctl", "shutdown", udid]).catch(() => {});
+          }
+          TS
+          node --import ./scripts/tsx.mjs scripts/native-ios-usage-proof.mts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-ios-usage-proof
+          path: ${{ runner.temp }}/native-usage-proof/ios-usage.json
+          if-no-files-found: error
