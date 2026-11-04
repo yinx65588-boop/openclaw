@@ -1,0 +1,155 @@
+name: Apple usage request repair proof
+on:
+  push:
+    branches: [proof/apple-usage-candidate-20261104]
+permissions:
+  contents: read
+jobs:
+  apple:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 0441c26acbe9fb871309be7b66d5cb11dd3b84a6
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - name: Compile both production request builders and capture the actual payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof/protocol
+          git rev-parse HEAD > .proof/base.txt
+          printf '%s' 'ZGlmZiAtLWdpdCBhL2FwcHMvaW9zL1NvdXJjZXMvRGVzaWduL0FnZW50UHJvTW9kZWxzLnN3aWZ0IGIvYXBwcy9pb3MvU291cmNlcy9EZXNpZ24vQWdlbnRQcm9Nb2RlbHMuc3dpZnQKaW5kZXggMzFmZmRmOTVjNS4uNGU2YWJkZjc5NyAxMDA2NDQKLS0tIGEvYXBwcy9pb3MvU291cmNlcy9EZXNpZ24vQWdlbnRQcm9Nb2RlbHMuc3dpZnQKKysrIGIvYXBwcy9pb3MvU291cmNlcy9EZXNpZ24vQWdlbnRQcm9Nb2RlbHMuc3dpZnQKQEAgLTc2LDEzICs3NiwxNCBAQCBlbnVtIENvc3RVc2FnZVJlcXVlc3QgewogICAgICAgICAgICAgOiBTdHJpbmcoZm9ybWF0OiAiOiUwMmQiLCBhYnNvbHV0ZU1pbnV0ZXMgJSA2MCkKICAgICAgICAgbGV0IHV0Y09mZnNldCA9ICJVVENcKG9mZnNldE1pbnV0ZXMgPCAwID8gIi0iIDogIisiKVwoYWJzb2x1dGVNaW51dGVzIC8gNjApXChtaW51dGVTdWZmaXgpIgogICAgICAgICBsZXQgcGFyYW1zOiBbU3RyaW5nOiBBbnldID0gWworICAgICAgICAgICAgImFnZW50U2NvcGUiOiAiYWxsIiwKICAgICAgICAgICAgICJkYXlzIjogMzEsCiAgICAgICAgICAgICAibW9kZSI6ICJzcGVjaWZpYyIsCiAgICAgICAgICAgICAidGltZVpvbmUiOiB0aW1lWm9uZS5pZGVudGlmaWVyLAogICAgICAgICAgICAgInV0Y09mZnNldCI6IHV0Y09mZnNldCwKICAgICAgICAgXQogICAgICAgICBndWFyZCBsZXQgZGF0YSA9IHRyeT8gSlNPTlNlcmlhbGl6YXRpb24uZGF0YSh3aXRoSlNPTk9iamVjdDogcGFyYW1zLCBvcHRpb25zOiBbLnNvcnRlZEtleXNdKSBlbHNlIHsKLSAgICAgICAgICAgIHJldHVybiAjInsiZGF5cyI6MzEsIm1vZGUiOiJnYXRld2F5In0iIworICAgICAgICAgICAgcmV0dXJuICMieyJhZ2VudFNjb3BlIjoiYWxsIiwiZGF5cyI6MzEsIm1vZGUiOiJnYXRld2F5In0iIwogICAgICAgICB9CiAgICAgICAgIHJldHVybiBTdHJpbmcoYnl0ZXM6IGRhdGEsIGVuY29kaW5nOiAudXRmOCkhCiAgICAgfQpkaWZmIC0tZ2l0IGEvYXBwcy9pb3MvVGVzdHMvQ29zdFVzYWdlUmVxdWVzdFRlc3RzLnN3aWZ0IGIvYXBwcy9pb3MvVGVzdHMvQ29zdFVzYWdlUmVxdWVzdFRlc3RzLnN3aWZ0Cm5ldyBmaWxlIG1vZGUgMTAwNjQ0CmluZGV4IDAwMDAwMDAwMDAuLmFiYjRmNDVlMjIKLS0tIC9kZXYvbnVsbAorKysgYi9hcHBzL2lvcy9UZXN0cy9Db3N0VXNhZ2VSZXF1ZXN0VGVzdHMuc3dpZnQKQEAgLTAsMCArMSwxNiBAQAoraW1wb3J0IEZvdW5kYXRpb24KK2ltcG9ydCBUZXN0aW5nCitAdGVzdGFibGUgaW1wb3J0IE9wZW5DbGF3CisKK3N0cnVjdCBDb3N0VXNhZ2VSZXF1ZXN0VGVzdHMgeworICAgIEBUZXN0IGZ1bmMgYG1vbnRobHkgdXNhZ2UgcmVxdWVzdHMgYWxsIGFnZW50cyB3aXRoIGxvY2FsIGRheSBib3VuZGFyaWVzYCgpIHRocm93cyB7CisgICAgICAgIGxldCB0aW1lWm9uZSA9IHRyeSAjcmVxdWlyZShUaW1lWm9uZShzZWNvbmRzRnJvbUdNVDogMzQ1ICogNjApKQorICAgICAgICBsZXQgZGF0YSA9IERhdGEoQ29zdFVzYWdlUmVxdWVzdC5tb250aFBhcmFtc0pTT04odGltZVpvbmU6IHRpbWVab25lKS51dGY4KQorICAgICAgICBsZXQgcGFyYW1zID0gdHJ5ICNyZXF1aXJlKEpTT05TZXJpYWxpemF0aW9uLmpzb25PYmplY3Qod2l0aDogZGF0YSkgYXM/IFtTdHJpbmc6IEFueV0pCisgICAgICAgICNleHBlY3QocGFyYW1zWyJhZ2VudFNjb3BlIl0gYXM/IFN0cmluZyA9PSAiYWxsIikKKyAgICAgICAgI2V4cGVjdChwYXJhbXNbImRheXMiXSBhcz8gSW50ID09IDMxKQorICAgICAgICAjZXhwZWN0KHBhcmFtc1sibW9kZSJdIGFzPyBTdHJpbmcgPT0gInNwZWNpZmljIikKKyAgICAgICAgI2V4cGVjdChwYXJhbXNbInRpbWVab25lIl0gYXM/IFN0cmluZyA9PSB0aW1lWm9uZS5pZGVudGlmaWVyKQorICAgICAgICAjZXhwZWN0KHBhcmFtc1sidXRjT2Zmc2V0Il0gYXM/IFN0cmluZyA9PSAiVVRDKzU6NDUiKQorICAgIH0KK30KZGlmZiAtLWdpdCBhL2FwcHMvbWFjb3MvU291cmNlcy9PcGVuQ2xhdy9Vc2FnZUNvc3REYXRhLnN3aWZ0IGIvYXBwcy9tYWNvcy9Tb3VyY2VzL09wZW5DbGF3L1VzYWdlQ29zdERhdGEuc3dpZnQKaW5kZXggYmNmNTlhOTkzNC4uNjQ4OGUxNTEzOSAxMDA2NDQKLS0tIGEvYXBwcy9tYWNvcy9Tb3VyY2VzL09wZW5DbGF3L1VzYWdlQ29zdERhdGEuc3dpZnQKKysrIGIvYXBwcy9tYWNvcy9Tb3VyY2VzL09wZW5DbGF3L1VzYWdlQ29zdERhdGEuc3dpZnQKQEAgLTY4LDcgKzY4LDEyIEBAIHN0cnVjdCBDb3N0VXNhZ2VNZW51RGF0ZVBhcnNlciB7CiAgICAgICAgIC8vIE9sZGVyIEdhdGV3YXkgdHpkYXRhIGNhbiB1c2UgdGhlIGV4aXN0aW5nIGZpeGVkLW9mZnNldCBjb250cmFjdCBmb3IgYW4gdW5rbm93biB6b25lLgogICAgICAgICBsZXQgbWludXRlcyA9IHNlbGYudGltZVpvbmUuc2Vjb25kc0Zyb21HTVQoKSAvIDYwCiAgICAgICAgIGxldCBvZmZzZXQgPSBTdHJpbmcoZm9ybWF0OiAiVVRDJUAlZDolMDJkIiwgbWludXRlcyA8IDAgPyAiLSIgOiAiKyIsIGFicyhtaW51dGVzKSAvIDYwLCBhYnMobWludXRlcykgJSA2MCkKLSAgICAgICAgcmV0dXJuIFsibW9kZSI6ICJzcGVjaWZpYyIsICJ0aW1lWm9uZSI6IHNlbGYudGltZVpvbmUuaWRlbnRpZmllciwgInV0Y09mZnNldCI6IG9mZnNldF0KKyAgICAgICAgcmV0dXJuIFsKKyAgICAgICAgICAgICJhZ2VudFNjb3BlIjogImFsbCIsCisgICAgICAgICAgICAibW9kZSI6ICJzcGVjaWZpYyIsCisgICAgICAgICAgICAidGltZVpvbmUiOiBzZWxmLnRpbWVab25lLmlkZW50aWZpZXIsCisgICAgICAgICAgICAidXRjT2Zmc2V0Ijogb2Zmc2V0LAorICAgICAgICBdCiAgICAgfQogCiAgICAgZnVuYyBwYXJzZShfIHZhbHVlOiBTdHJpbmcpIC0+IERhdGU/IHsKZGlmZiAtLWdpdCBhL2FwcHMvbWFjb3MvVGVzdHMvT3BlbkNsYXdJUENUZXN0cy9Vc2FnZUNvc3REYXRhVGVzdHMuc3dpZnQgYi9hcHBzL21hY29zL1Rlc3RzL09wZW5DbGF3SVBDVGVzdHMvVXNhZ2VDb3N0RGF0YVRlc3RzLnN3aWZ0CmluZGV4IGRiOGExMzQ0OWUuLjA5MDA5ZTAzMGUgMTAwNjQ0Ci0tLSBhL2FwcHMvbWFjb3MvVGVzdHMvT3BlbkNsYXdJUENUZXN0cy9Vc2FnZUNvc3REYXRhVGVzdHMuc3dpZnQKKysrIGIvYXBwcy9tYWNvcy9UZXN0cy9PcGVuQ2xhd0lQQ1Rlc3RzL1VzYWdlQ29zdERhdGFUZXN0cy5zd2lmdApAQCAtMTYxLDYgKzE2MSw3IEBAIHN0cnVjdCBVc2FnZUNvc3REYXRhVGVzdHMgewogICAgICAgICBsZXQgZGF0ZXMgPSB0cnkgQ29zdFVzYWdlTWVudURhdGVQYXJzZXIodGltZVpvbmU6ICNyZXF1aXJlKFRpbWVab25lKGlkZW50aWZpZXI6IHpvbmUpKSkKICAgICAgICAgbGV0IGlzbyA9IElTTzg2MDFEYXRlRm9ybWF0dGVyKCkKICAgICAgICAgbGV0IG5vdyA9IHRyeSAjcmVxdWlyZShpc28uZGF0ZShmcm9tOiB0aW1lc3RhbXApKQorICAgICAgICAjZXhwZWN0KGRhdGVzLnJlcXVlc3RQYXJhbWV0ZXJzWyJhZ2VudFNjb3BlIl0gPT0gQW55SGFzaGFibGUoImFsbCIpKQogICAgICAgICAjZXhwZWN0KGRhdGVzLnJlcXVlc3RQYXJhbWV0ZXJzWyJtb2RlIl0gPT0gQW55SGFzaGFibGUoInNwZWNpZmljIikpCiAgICAgICAgICNleHBlY3QoZGF0ZXMucmVxdWVzdFBhcmFtZXRlcnNbInRpbWVab25lIl0gPT0gQW55SGFzaGFibGUoem9uZSkpCiAgICAgICAgICNleHBlY3QoZGF0ZXMuZm9ybWF0KG5vdykgPT0gZGF5KQo=' | base64 -D > .proof/tested.patch
+          git apply --index .proof/tested.patch
+          git diff --check HEAD
+          shasum -a 256 apps/ios/Sources/Design/AgentProModels.swift apps/ios/Tests/CostUsageRequestTests.swift apps/macos/Sources/OpenClaw/UsageCostData.swift apps/macos/Tests/OpenClawIPCTests/UsageCostDataTests.swift > .proof/source-hashes.txt
+          swift --version | tee .proof/swift-version.txt
+          node scripts/prepare-native-protocol.mjs --language swift --out .proof/protocol
+          swiftc -emit-library -emit-module -module-name OpenClawProtocol \
+            -emit-module-path .proof/OpenClawProtocol.swiftmodule \
+            .proof/protocol/GatewayModels.swift \
+            apps/shared/OpenClawKit/Sources/OpenClawProtocol/AnyCodable.swift \
+            -o .proof/libOpenClawProtocol.dylib
+          cat > .proof/main.swift <<'SWIFT'
+          import Foundation
+
+          let timezone = TimeZone(identifier: "UTC")!
+          let ios = try JSONSerialization.jsonObject(with: Data(CostUsageRequest.monthParamsJSON(timeZone: timezone).utf8))
+          let mac = CostUsageMenuDateParser(timeZone: timezone).requestParameters
+          let payloads = try JSONSerialization.data(withJSONObject: ["ios": ios, "macos": mac], options: [.sortedKeys])
+          FileHandle.standardOutput.write(payloads)
+          SWIFT
+          swiftc -I .proof -L .proof -lOpenClawProtocol \
+            apps/ios/Sources/Design/AgentProModels.swift \
+            apps/macos/Sources/OpenClaw/UsageCostData.swift \
+            .proof/main.swift -o .proof/apple-usage-payloads
+          DYLD_LIBRARY_PATH="$PWD/.proof" .proof/apple-usage-payloads > .proof/apple-usage-payloads.json
+          cat .proof/apple-usage-payloads.json
+      - name: Run the native tests against the two complete production modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof/native-tests/{Sources/OpenClawProtocol,Sources/OpenClaw,Tests/RequestTests}
+          cat > .proof/native-tests/Package.swift <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+          let package = Package(name: "NativeUsageProof", targets: [
+              .target(name: "OpenClawProtocol"),
+              .target(name: "OpenClaw", dependencies: ["OpenClawProtocol"]),
+              .testTarget(name: "RequestTests", dependencies: ["OpenClaw"]),
+          ])
+          SWIFT
+          cp .proof/protocol/GatewayModels.swift apps/shared/OpenClawKit/Sources/OpenClawProtocol/AnyCodable.swift .proof/native-tests/Sources/OpenClawProtocol/
+          cp apps/ios/Sources/Design/AgentProModels.swift apps/macos/Sources/OpenClaw/UsageCostData.swift .proof/native-tests/Sources/OpenClaw/
+          cp apps/ios/Tests/CostUsageRequestTests.swift apps/macos/Tests/OpenClawIPCTests/UsageCostDataTests.swift .proof/native-tests/Tests/RequestTests/
+          swift test --package-path .proof/native-tests 2>&1 | tee .proof/native-tests.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: apple-usage-payloads-20261104
+          path: |
+            .proof/*.json
+            .proof/*.txt
+            .proof/main.swift
+            .proof/*.patch
+            .proof/*.log
+          include-hidden-files: true
+  gateway:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    needs: apple
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 0441c26acbe9fb871309be7b66d5cb11dd3b84a6
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: apple-usage-payloads-20261104
+          path: .proof
+      - name: Replay the unchanged payloads through a real isolated Gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > src/gateway/server.apple-usage-scope.proof.test.ts <<'TS'
+          import { readFile } from "node:fs/promises";
+          import { expect, it } from "vitest";
+          import { writeGatewayConfig } from "./test-helpers.config-runtime.js";
+          import { connectOk, installGatewayTestHooks, rpcReq, testState } from "./test-helpers.js";
+          import { withGatewayClient } from "./test-with-server.js";
+
+          installGatewayTestHooks({ scope: "suite" });
+
+          it("native usage requests reach an explicit multi-agent Gateway", async () => {
+            const payloads = JSON.parse(await readFile(".proof/apple-usage-payloads.json", "utf8"));
+            expect(Object.keys(payloads)).toEqual(["ios", "macos"]);
+            testState.sessionStorePath = undefined;
+            await writeGatewayConfig({ agents: { ownership: "explicit", entries: { alpha: {}, beta: {} } } });
+            await withGatewayClient(async (ws) => {
+              await connectOk(ws, { token: "secret", scopes: ["operator.read"] });
+              for (const [client, params] of Object.entries(payloads)) {
+                expect(params).toHaveProperty("agentScope", "all");
+                const result = await rpcReq(ws, "usage.cost", params);
+                expect(result.ok).toBe(true);
+                expect(result.payload?.totals).toEqual(expect.any(Object));
+                const unscoped = { ...(params as Record<string, unknown>) };
+                delete unscoped.agentScope;
+                const control = await rpcReq(ws, "usage.cost", unscoped);
+                expect(control.ok).toBe(false);
+                expect(control.error?.message).toMatch(/no explicit owner|select an agent explicitly/i);
+                console.log(JSON.stringify({ client, scoped: result.ok, unscoped: control.error?.message }));
+              }
+            });
+          });
+          TS
+          cp src/gateway/server.apple-usage-scope.proof.test.ts .proof/
+          node scripts/run-vitest.mjs src/gateway/server.apple-usage-scope.proof.test.ts src/gateway/server.usage-cost-agent-scope.test.ts --maxWorkers=1 2>&1 | tee .proof/gateway.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: apple-usage-candidate-20261104
+          path: |
+            .proof/*.txt
+            .proof/*.json
+            .proof/*.log
+            .proof/*.swift
+            .proof/*.test.ts
+            .proof/*.patch
+          include-hidden-files: true
