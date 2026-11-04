@@ -1,0 +1,128 @@
+name: Apple usage request baseline
+on:
+  push:
+    branches: [proof/apple-usage-baseline-v2-20261104]
+permissions:
+  contents: read
+jobs:
+  apple:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 0441c26acbe9fb871309be7b66d5cb11dd3b84a6
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - name: Compile both production request builders and capture the actual payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .proof/protocol
+          git rev-parse HEAD > .proof/base.txt
+          swift --version | tee .proof/swift-version.txt
+          node scripts/prepare-native-protocol.mjs --language swift --out .proof/protocol
+          swiftc -emit-library -emit-module -module-name OpenClawProtocol \
+            -emit-module-path .proof/OpenClawProtocol.swiftmodule \
+            .proof/protocol/GatewayModels.swift \
+            apps/shared/OpenClawKit/Sources/OpenClawProtocol/AnyCodable.swift \
+            -o .proof/libOpenClawProtocol.dylib
+          cat > .proof/main.swift <<'SWIFT'
+          import Foundation
+
+          let timezone = TimeZone(identifier: "UTC")!
+          let ios = try JSONSerialization.jsonObject(with: Data(CostUsageRequest.monthParamsJSON(timeZone: timezone).utf8))
+          let mac = CostUsageMenuDateParser(timeZone: timezone).requestParameters
+          let payloads = try JSONSerialization.data(withJSONObject: ["ios": ios, "macos": mac], options: [.sortedKeys])
+          FileHandle.standardOutput.write(payloads)
+          SWIFT
+          swiftc -I .proof -L .proof -lOpenClawProtocol \
+            apps/ios/Sources/Design/AgentProModels.swift \
+            apps/macos/Sources/OpenClaw/UsageCostData.swift \
+            .proof/main.swift -o .proof/apple-usage-payloads
+          DYLD_LIBRARY_PATH="$PWD/.proof" .proof/apple-usage-payloads > .proof/apple-usage-payloads.json
+          cat .proof/apple-usage-payloads.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: apple-usage-payloads-20261104
+          path: |
+            .proof/*.json
+            .proof/*.txt
+            .proof/main.swift
+          include-hidden-files: true
+  gateway:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    needs: apple
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 0441c26acbe9fb871309be7b66d5cb11dd3b84a6
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: apple-usage-payloads-20261104
+          path: .proof
+      - name: Replay the unchanged payloads through a real isolated Gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > src/gateway/server.apple-usage-scope.proof.test.ts <<'TS'
+          import { readFile } from "node:fs/promises";
+          import { expect, it } from "vitest";
+          import { writeGatewayConfig } from "./test-helpers.config-runtime.js";
+          import { connectOk, installGatewayTestHooks, rpcReq, testState } from "./test-helpers.js";
+          import { withGatewayClient } from "./test-with-server.js";
+
+          installGatewayTestHooks({ scope: "suite" });
+
+          it("native usage requests lack explicit all-agent scope on the base", async () => {
+            const payloads = JSON.parse(await readFile(".proof/apple-usage-payloads.json", "utf8"));
+            expect(Object.keys(payloads)).toEqual(["ios", "macos"]);
+            testState.sessionStorePath = undefined;
+            await writeGatewayConfig({ agents: { ownership: "explicit", entries: { alpha: {}, beta: {} } } });
+            await withGatewayClient(async (ws) => {
+              await connectOk(ws, { token: "secret", scopes: ["operator.read"] });
+              for (const [client, params] of Object.entries(payloads)) {
+                expect(params).not.toHaveProperty("agentScope");
+                const result = await rpcReq(ws, "usage.cost", params);
+                expect(result.ok).toBe(false);
+                expect(result.error?.message).toMatch(/no explicit owner|select an agent explicitly/i);
+                const control = await rpcReq(ws, "usage.cost", { ...(params as object), agentScope: "all" });
+                expect(control.ok).toBe(true);
+                expect(control.payload?.totals).toEqual(expect.any(Object));
+                console.log(JSON.stringify({ client, unscoped: result.error?.message, allAgentsControl: control.ok }));
+              }
+            });
+          });
+          TS
+          cp src/gateway/server.apple-usage-scope.proof.test.ts .proof/
+          node scripts/run-vitest.mjs src/gateway/server.apple-usage-scope.proof.test.ts --maxWorkers=1 2>&1 | tee .proof/gateway.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: apple-usage-baseline-v2-20261104
+          path: |
+            .proof/*.txt
+            .proof/*.json
+            .proof/*.log
+            .proof/*.swift
+            .proof/*.test.ts
+          include-hidden-files: true
