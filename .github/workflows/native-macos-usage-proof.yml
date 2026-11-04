@@ -1,0 +1,209 @@
+name: Native macOS Usage boundary
+on: push
+permissions:
+  contents: read
+jobs:
+  macos:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: xcode-27
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f7082435226fb194b8bf647e5bec50e9e3b16c40
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: 'off'
+          semantic-checks: 'true'
+      - name: Build the patched macOS app bundle
+        env:
+          BUILD_CONFIG: debug
+          BUILD_ARCHS: arm64
+          SIGN_IDENTITY: "-"
+          ALLOW_ADHOC_SIGNING: "1"
+          OPENCLAW_SKIP_MLX_TTS: "1"
+        run: |
+          set -euo pipefail
+          source scripts/lib/swift-toolchain.sh
+          select_xcode_toolchain
+          bash scripts/package-mac-app.sh > "$RUNNER_TEMP/macos-build.log" 2>&1 || {
+            tail -100 "$RUNNER_TEMP/macos-build.log"
+            exit 1
+          }
+          git diff --exit-code -- apps/macos/Sources apps/shared
+      - name: Capture the actual macOS status-menu cost request and reply
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/native-usage-proof"
+          cat > scripts/native-macos-usage-proof.mts <<'TS'
+          import assert from "node:assert/strict";
+          import { execFileSync, spawn } from "node:child_process";
+          import { once } from "node:events";
+          import { mkdir, writeFile } from "node:fs/promises";
+          import path from "node:path";
+          import { setTimeout as sleep } from "node:timers/promises";
+          import { WebSocket, WebSocketServer } from "ws";
+          import { replaceSessionEntrySync, persistSessionTranscriptTurn } from "../src/config/sessions/session-accessor.js";
+          import { callGateway } from "../src/gateway/call.js";
+          import { createOpenClawTestInstance } from "../test/helpers/openclaw-test-instance.js";
+
+          const root = process.env.RUNNER_TEMP!;
+          const proof = path.join(root, "native-usage-proof");
+          const packageDir = process.cwd();
+          const fixture = await createOpenClawTestInstance({
+            name: "native-macos-usage",
+            cwd: packageDir,
+            entrypoint: [path.join(packageDir, "openclaw.mjs")],
+            reserveIdlePort: false,
+            env: { OPENCLAW_TEST_MINIMAL_GATEWAY: "0" },
+            config: { agents: { ownership: "explicit", entries: { alpha: {}, beta: {} } } },
+          });
+          let child: ReturnType<typeof spawn> | undefined;
+          let gatewayLogs = "";
+          try {
+            process.env.OPENCLAW_STATE_DIR = fixture.stateDir;
+            process.env.OPENCLAW_CONFIG_PATH = fixture.configPath;
+            const now = Date.now();
+            for (const [agentId, cost] of [["alpha", 1.25], ["beta", 2.5]] as const) {
+              const sessionId = `usage-proof-${agentId}`;
+              const target = { agentId, sessionKey: `agent:${agentId}:usage-proof`, sessionId };
+              replaceSessionEntrySync(target, { sessionId, updatedAt: now });
+              await persistSessionTranscriptTurn(target, {
+                cwd: fixture.homeDir,
+                updateMode: "none",
+                messages: [{ now, message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: "Synthetic usage proof." }],
+                  api: "openai-responses", provider: "fixture", model: "usage-model", stopReason: "stop",
+                  timestamp: now,
+                  usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 10,
+                    cost: { input: cost, output: 0, cacheRead: 0, cacheWrite: 0, total: cost } },
+                } }],
+              });
+            }
+            const { cleanupSessionStateForTest } = await import("../src/test-utils/session-state-cleanup.js");
+            await cleanupSessionStateForTest({ stateDir: fixture.stateDir, rootPath: fixture.state.root });
+            child = spawn(process.execPath, [path.join(packageDir, "openclaw.mjs"), "gateway", "run",
+              "--port", String(fixture.port), "--bind", "loopback", "--allow-unconfigured"], {
+              cwd: packageDir, env: fixture.env, stdio: ["ignore", "pipe", "pipe"],
+            });
+            for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk) => {
+              gatewayLogs = (gatewayLogs + chunk).slice(-18000);
+            });
+            let ready = false;
+            for (let attempt = 0; attempt < 120 && child.exitCode === null; attempt++) {
+              const response = await fetch(fixture.url.replace("ws:", "http:") + "/readyz",
+                { signal: AbortSignal.timeout(1500) }).catch(() => undefined);
+              if (response?.ok) { ready = true; break; }
+              await sleep(1000);
+            }
+            assert(ready, `Gateway startup failed (exit=${child.exitCode})`);
+            const gateway = {
+              config: {}, configPath: fixture.configPath, url: fixture.url,
+              token: fixture.gatewayToken, ignoreEnvUrlOverride: true, deviceIdentity: null,
+              sharedStateMode: "read-only" as const, timeoutMs: 30000,
+            };
+            const usage = await callGateway<{ totals: { totalCost: number } }>({
+              ...gateway, method: "usage.cost", params: { agentScope: "all" },
+            });
+            assert.equal(usage.totals.totalCost, 3.75);
+            await assert.rejects(callGateway({ ...gateway, method: "usage.cost", params: {} }), /no explicit owner|select an agent explicitly/i);
+            console.log("Gateway controls passed: alpha $1.25 + beta $2.50 = $3.75; unscoped rejected");
+            const relay = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+            let app: ReturnType<typeof spawn> | undefined;
+            let observed: { clientId: string; scope: string; totalUsd: number; dailyRows: number } | undefined;
+            try {
+              await new Promise<void>((resolve, reject) => {
+                relay.once("listening", resolve);
+                relay.once("error", reject);
+              });
+              const bound = relay.address();
+              assert(bound && typeof bound !== "string");
+              relay.on("connection", (client) => {
+                const upstream = new WebSocket(fixture.url);
+                const pending = new Map<string, string>();
+                let clientId = "";
+                const outbox: Array<{ data: Parameters<WebSocket["send"]>[0]; binary: boolean }> = [];
+                upstream.on("open", () => {
+                  for (const { data, binary } of outbox) upstream.send(data, { binary });
+                  outbox.length = 0;
+                });
+                client.on("message", (data, binary) => {
+                  const message = JSON.parse(data.toString());
+                  if (message.method === "connect") clientId = message.params?.client?.id ?? "";
+                  if (message.method === "usage.cost") pending.set(message.id, message.params?.agentScope ?? "");
+                  if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
+                  else if (upstream.readyState === WebSocket.CONNECTING) outbox.push({ data, binary });
+                });
+                upstream.on("message", (data, binary) => {
+                  const message = JSON.parse(data.toString());
+                  const scope = pending.get(message.id);
+                  if (scope !== undefined) {
+                    pending.delete(message.id);
+                    if (message.ok === true && clientId === "openclaw-macos") {
+                      observed = { clientId, scope, totalUsd: message.payload.totals.totalCost,
+                        dailyRows: message.payload.daily.length };
+                    }
+                  }
+                  if (client.readyState === WebSocket.OPEN) client.send(data, { binary });
+                });
+                upstream.on("error", () => client.terminate());
+                client.on("error", () => upstream.terminate());
+                upstream.on("close", () => client.terminate());
+                client.on("close", () => upstream.terminate());
+              });
+              const appState = path.join(root, "mac-usage-client-state");
+              const appConfig = path.join(appState, "openclaw.json");
+              await mkdir(appState, { recursive: true });
+              await writeFile(appConfig, JSON.stringify({ gateway: {
+                mode: "remote", remote: { transport: "direct", url: `ws://127.0.0.1:${bound.port}`,
+                  token: fixture.gatewayToken },
+              } }), { mode: 0o600 });
+              execFileSync("defaults", ["write", "ai.openclaw.mac.profile.usage-proof",
+                "openclaw.onboardingSeen", "-bool", "true"]);
+              app = spawn(path.resolve("dist/OpenClaw.app/Contents/MacOS/OpenClaw"), ["--debug-open-menu"], {
+                env: { ...process.env, OPENCLAW_PROFILE: "usage-proof", OPENCLAW_STATE_DIR: appState,
+                  OPENCLAW_CONFIG_PATH: appConfig }, stdio: "ignore",
+              });
+              for (let attempt = 0; attempt < 60 && !observed && app.exitCode === null; attempt++) await sleep(1000);
+              assert(observed, `No successful cost reply from launched macOS menu (app exit=${app.exitCode})`);
+              assert.equal(observed.scope, "all");
+              assert.equal(observed.totalUsd, 3.75);
+              assert(observed.dailyRows > 0);
+              const evidence = { source: "f7082435226fb194b8bf647e5bec50e9e3b16c40",
+                gatewaySource: "f7082435226fb194b8bf647e5bec50e9e3b16c40", ownership: "explicit", agents: ["alpha", "beta"],
+                unscopedControl: "rejected", entry: "packaged macOS application status menu", ...observed };
+              await writeFile(path.join(proof, "macos-usage.json"), JSON.stringify(evidence, null, 2));
+              console.log(JSON.stringify(evidence));
+            } finally {
+              app?.kill();
+              for (const client of relay.clients) client.terminate();
+              relay.close();
+            }
+          } catch (error) {
+            if (child && child.exitCode !== null) {
+              const redact = (text: string) => text.replaceAll(fixture.gatewayToken, "<redacted>")
+                .replaceAll(fixture.hookToken, "<redacted>").replaceAll(fixture.url, "<loopback>");
+              console.error(redact(gatewayLogs));
+            }
+            throw error;
+          } finally {
+            if (child && child.exitCode === null && child.signalCode === null) {
+              const exit = once(child, "exit");
+              child.kill("SIGTERM");
+              const timer = setTimeout(() => child?.kill("SIGKILL"), 8000);
+              await exit;
+              clearTimeout(timer);
+            }
+            await fixture.cleanup();
+          }
+          TS
+          node --import ./scripts/tsx.mjs scripts/native-macos-usage-proof.mts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-macos-usage-proof
+          path: ${{ runner.temp }}/native-usage-proof/macos-usage.json
+          if-no-files-found: error
