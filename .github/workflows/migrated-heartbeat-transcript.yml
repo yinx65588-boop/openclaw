@@ -1,0 +1,30 @@
+name: Migrated heartbeat transcript current-main proof
+on: push
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Run a migrated heartbeat and read its exact transcript via Gateway
+        run: |
+          test "$(git rev-parse HEAD^)" = "4a43644e7a7b455d6e257f1ab62fe00e74156a5f"
+          git diff --exit-code HEAD^ HEAD -- src ':!src/gateway/server.migrated-heartbeat-transcript.product.test.ts'
+          node scripts/run-vitest.mjs src/gateway/server.migrated-heartbeat-transcript.product.test.ts --maxWorkers=1
