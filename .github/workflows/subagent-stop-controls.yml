@@ -1,0 +1,30 @@
+name: Subagent stop current-main controls
+on: push
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ffbbb514ba3b7d06d59ca8dd11521e100335da4d
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Existing public Stop and requester settlement controls
+        run: |
+          node scripts/run-vitest.mjs \
+            src/agents/subagents/announce/subagent-announce.requester-settle-cancel.test.ts \
+            src/gateway/server.subagent-stop-followup.product.test.ts \
+            --maxWorkers=1
