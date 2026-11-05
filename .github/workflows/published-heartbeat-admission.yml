@@ -1,0 +1,24 @@
+name: Published beta heartbeat candidate admission
+on: push
+permissions:
+  contents: read
+jobs:
+  beta:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          sparse-checkout: .proof
+          persist-credentials: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238
+        with:
+          node-version: 24.22.1
+      - name: Install exact public packages and inspect read-only candidate admission
+        run: |
+          set -euo pipefail
+          export PROOF_ROOT="$RUNNER_TEMP/heartbeat-admission"
+          npm install --prefix "$PROOF_ROOT/stable" --no-audit --no-fund openclaw@2026.10.10
+          npm install --prefix "$PROOF_ROOT/beta" --no-audit --no-fund openclaw@2026.11.5-beta.1
+          node .proof/published-heartbeat-admission.mjs
