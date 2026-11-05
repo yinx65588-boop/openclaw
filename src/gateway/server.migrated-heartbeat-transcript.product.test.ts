@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { expect, it } from "vitest";
 import { startOpenAiResponsesModelServer } from "../../test/helpers/openai-responses-model-fixture.js";
 import { writeOpenAiResponsesText } from "../../test/helpers/openai-responses-sse.js";
@@ -42,7 +44,7 @@ it("opens the transcript of a manually run migrated main heartbeat", async () =>
       },
       cron: { enabled: true },
     };
-    await state.writeText("workspace/HEARTBEAT.md", "Report the synthetic monitor result.\n");
+    await fs.writeFile(path.join(state.workspaceDir, "HEARTBEAT.md"), "Report the synthetic monitor result.\n");
     const migrated = await withStateMigrationBackupForTest({}, () =>
       retireHeartbeatWithDoctor(legacy, state.env),
     );
