@@ -275,6 +275,7 @@ it.each<Scenario>([
 
 it.each([
   "supported",
+  "reported defaults",
   "retired July reasoning",
   "unrelated invalid field",
   "invalid heartbeat",
@@ -284,7 +285,20 @@ it.each([
   "changed source",
 ] as const)("inspects %s heartbeat config without changing live data", async (kind) => {
   const f = fixture({ name: kind, scratch: source }, false);
-  const agents = {
+  const agents = kind === "reported defaults"
+    ? {
+        defaults: {
+          heartbeat: {
+            every: "1h",
+            activeHours: { start: "08:00", end: "22:00", timezone: "local" },
+            model: "deepseek/deepseek-v4-flash",
+            lightContext: true,
+            isolatedSession: true,
+          },
+        },
+        entries: { main: { workspace: path.dirname(f.sourcePath) } },
+      }
+    : {
     entries: {
       main: {
         heartbeat: {
@@ -327,7 +341,7 @@ it.each([
 
   expect(output).toHaveBeenCalledOnce();
   const verdict = parseUpdateAdmissionVerdict(output.mock.calls[0]?.[0]);
-  const admitted = kind === "supported" || kind === "retired July reasoning";
+  const admitted = kind === "supported" || kind === "retired July reasoning" || kind === "reported defaults";
   expect(verdict).toMatchObject(
     admitted
       ? {

@@ -1,0 +1,30 @@
+name: Heartbeat defaults candidate admission
+on: push
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Compare reported defaults with valid and invalid controls
+        run: |
+          test "$(git rev-parse HEAD^)" = "ffbbb514ba3b7d06d59ca8dd11521e100335da4d"
+          git diff --exit-code HEAD^ HEAD -- src ':!src/cli/update-cli/update-command-admit.heartbeat.test.ts'
+          node scripts/run-vitest.mjs src/cli/update-cli/update-command-admit.heartbeat.test.ts --maxWorkers=1 -t 'inspects (supported|reported defaults|invalid heartbeat|unrelated invalid field) heartbeat config'
