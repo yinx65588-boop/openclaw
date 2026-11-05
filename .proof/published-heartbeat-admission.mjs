@@ -79,7 +79,8 @@ for (const [name, defaults, requestedChannel, expected] of [
   const config = verdict.facts?.checks?.find((check) => check.name === "config");
   const reasonCodes = verdict.reasons?.map((reason) => reason.code);
   console.log(JSON.stringify({ name, exit: result.status, verdict: verdict.verdict, config: config?.status, reasonCodes }));
-  assert.equal(verdict.candidateVersion, candidateVersion);
+  assert.equal(verdict.facts?.candidateVersion, candidateVersion);
+  assert.equal(result.status, verdict.verdict === "admit" ? 0 : 3);
   assert(config, "config check must run");
   if (expected) {
     assert.equal(verdict.verdict, expected);
