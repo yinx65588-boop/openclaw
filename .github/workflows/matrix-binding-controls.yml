@@ -1,0 +1,31 @@
+name: Matrix binding current-main controls
+on: push
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ffbbb514ba3b7d06d59ca8dd11521e100335da4d
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: '24.22.1'
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - uses: ./.github/actions/setup-test-bun
+      - name: Existing Matrix binding storage, routing, and activity controls
+        run: |
+          node scripts/run-vitest.mjs \
+            extensions/matrix/src/matrix/thread-bindings.test.ts \
+            extensions/matrix/src/matrix/monitor/handler.binding-route.test.ts \
+            src/auto-reply/reply/session.binding-activity.test.ts \
+            --maxWorkers=1
