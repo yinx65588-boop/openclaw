@@ -1,0 +1,24 @@
+name: OpenClaw PR 197098 regression line allocation
+on: push
+permissions:
+  contents: read
+jobs:
+  ratchet:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: 'false'
+          cache-mode: restore
+      - name: Check exact regression allocation against the failed CI base
+        run: |
+          test "$(git rev-parse HEAD^)" = "e9fcf00afa31d173f22cccbc06982a086694cdd0"
+          git diff --check HEAD^ HEAD
+          pnpm check:test-lines-ratchet --base HEAD^ --no-merge-base
