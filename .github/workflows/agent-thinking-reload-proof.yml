@@ -1,0 +1,82 @@
+name: Agent thinking reload baseline and candidate
+on: push
+permissions:
+  contents: read
+jobs:
+  compare:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [baseline, candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+      OPENCLAW_TEST_FILE_LOG: '1'
+      NODE_OPTIONS: --max-old-space-size=8192
+      FORCE_COLOR: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Verify proof base and candidate formatting
+        run: |
+          test "$(git rev-parse HEAD^)" = "398e258269a37d4883477aa60702704e92f8ae23"
+          git diff --check HEAD^ HEAD
+          pnpm exec oxfmt --check src/gateway/operator-model-presentation.ts src/gateway/operator-model-presentation.test.ts
+      - name: Restore upstream comparator for the baseline
+        if: matrix.revision == 'baseline'
+        run: |
+          git restore --source=HEAD^ --worktree -- src/gateway/operator-model-presentation.ts
+          git diff --exit-code HEAD^ -- src/gateway/operator-model-presentation.ts
+      - name: Apply real Gateway config changes and measure visibility builds
+        env:
+          PROOF_REVISION: ${{ matrix.revision }}
+        run: |
+          set +e
+          node scripts/run-vitest.mjs src/gateway/gateway.thinking-reload-model-visibility.product.test.ts --maxWorkers=1 2>&1 | tee /tmp/agent-thinking-reload-proof.log
+          result=${PIPESTATUS[0]}
+          set -e
+          if test "$PROOF_REVISION" = baseline; then
+            test "$result" -eq 1
+            rg -F 'expected 18 to be +0' /tmp/agent-thinking-reload-proof.log
+            rg -F '"modelPolicyControl":[{"builds":2,"equal":false' /tmp/agent-thinking-reload-proof.log
+          else
+            test "$result" -eq 0
+          fi
+      - name: Run focused presentation and metadata lifecycle regressions
+        if: matrix.revision == 'candidate'
+        run: node scripts/run-vitest.mjs src/gateway/operator-model-presentation.test.ts src/gateway/server-chat-metadata-lifecycle.test.ts --maxWorkers=1
+  static:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - name: Targeted format, lint and type graphs
+        run: |
+          test "$(git rev-parse HEAD^)" = "398e258269a37d4883477aa60702704e92f8ae23"
+          git diff --check HEAD^ HEAD
+          pnpm exec oxfmt --check src/gateway/operator-model-presentation.ts src/gateway/operator-model-presentation.test.ts
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 src/gateway/operator-model-presentation.ts src/gateway/operator-model-presentation.test.ts
+          node scripts/run-tsgo.mjs -p tsconfig.core.json
+          node scripts/run-tsgo.mjs -p test/tsconfig/tsconfig.core.test.gateway-root.json
