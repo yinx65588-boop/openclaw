@@ -1,0 +1,29 @@
+name: Agent thinking config reload proof
+on: push
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      OPENCLAW_VITEST_RUNTIME: bun
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: 'false'
+          cache-mode: restore
+      - uses: ./.github/actions/setup-test-bun
+      - name: Run Gateway config.patch and count policy builds
+        timeout-minutes: 8
+        run: |
+          test "$(git rev-parse HEAD^)" = "398e258269a37d4883477aa60702704e92f8ae23"
+          git diff --exit-code HEAD^ HEAD -- src ':!src/gateway/gateway.thinking-reload-model-visibility.e2e.test.ts'
+          pnpm test:e2e:gateway src/gateway/gateway.thinking-reload-model-visibility.e2e.test.ts --maxWorkers=1
