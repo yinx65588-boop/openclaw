@@ -1,0 +1,30 @@
+name: Agent thinking reload owner type and lint checks
+on: push
+permissions:
+  contents: read
+jobs:
+  static:
+    if: github.repository == 'yinx65588-boop/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: 'false'
+          cache-mode: restore
+          semantic-checks: 'true'
+      - name: Targeted format, lint and type graphs
+        run: |
+          test "$(git rev-parse HEAD^)" = "398e258269a37d4883477aa60702704e92f8ae23"
+          git diff --check HEAD^ HEAD
+          pnpm exec oxfmt --check src/gateway/operator-model-presentation.ts src/gateway/operator-model-presentation.test.ts
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.json --threads=1 src/gateway/operator-model-presentation.ts src/gateway/operator-model-presentation.test.ts
+          node scripts/run-tsgo.mjs -p tsconfig.core.json
+          node scripts/run-tsgo.mjs -p test/tsconfig/tsconfig.core.test.gateway-root.json
